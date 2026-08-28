@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Certificate Verification</title>
+
+    <style>
+
+        body {
+            background: #f2f2f2;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 40px;
+        }
+
+        .verification-box {
+            width: 700px;
+            margin: auto;
+            padding: 40px;
+            background: white;
+            border: 5px solid #222;
+            box-sizing: border-box;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 10px;
+        }
+
+        .verified {
+            text-align: center;
+            color: green;
+            font-size: 30px;
+            font-weight: bold;
+            margin: 25px 0;
+        }
+
+        .not-found {
+            text-align: center;
+            color: red;
+            font-size: 30px;
+            font-weight: bold;
+            margin: 25px 0;
+        }
+
+        .row {
+            font-size: 20px;
+            padding: 15px;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .label {
+            font-weight: bold;
+        }
+
+        .message {
+            text-align: center;
+            font-size: 18px;
+            margin-top: 25px;
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+    <div class="verification-box">
+
+        <h1>Certificate Verification</h1>
+
+        {% if certificate %}
+
+            <div class="verified">
+                ✓ CERTIFICATE VERIFIED
+            </div>
+
+            <div class="row">
+                <span class="label">Certificate ID:</span>
+                {{ certificate[0] }}
+            </div>
+
+            <div class="row">
+                <span class="label">Serial Number:</span>
+                {{ certificate[1] }}
+            </div>
+
+            <div class="row">
+                <span class="label">Owner Name:</span>
+                {{ certificate[2] }}
+            </div>
+
+            <div class="row">
+                <span class="label">Instrument Type:</span>
+                {{ certificate[3] }}
+            </div>
+
+            <div class="row">
+                <span class="label">Verification Date:</span>
+                {{ certificate[4] }}
+            </div>
+
+            <div class="row">
+                <span class="label">Expiry Date:</span>
+                {{ certificate[5] }}
+            </div>
+
+            <div class="message">
+                This certificate exists in the official verification database.
+            </div>
+
+        {% else %}
+
+            <div class="not-found">
+                ✗ CERTIFICATE NOT FOUND
+            </div>
+
+            <div class="message">
+                The certificate ID could not be found in the verification database.
+            </div>
+
+        {% endif %}
+
+    </div>
+
+</body>
+
+</html>

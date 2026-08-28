@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Instrument Verification Application</title>
+</head>
+
+<body>
+
+    <h1>Instrument Verification Application</h1>
+
+    <form action="/submit" method="POST">
+
+        <label>Instrument Serial Number:</label>
+        <input type="text" name="serial_number" required>
+
+        <br><br>
+
+        <label>Owner Name:</label>
+        <input type="text" name="owner_name" required>
+
+        <br><br>
+
+        <label>Instrument Type:</label>
+        <input type="text" name="instrument_type" required>
+
+        <br><br>
+
+        <label>Verification Date:</label>
+        <input type="date" name="verification_date" required>
+
+        <br><br>
+
+        <label>Expiry Date:</label>
+        <input type="date" name="expiry_date" required>
+
+        <br><br>
+
+        <button type="submit">Submit Application</button>
+
+    </form>
+
+</body>
+</html>
