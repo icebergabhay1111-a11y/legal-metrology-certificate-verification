@@ -1,18 +1,53 @@
 from flask import Flask, render_template, request
 import sqlite3
-import qrcode
 import os
+import socket
+import qrcode
+
+# ============================================================
+# FLASK APP
+# ============================================================
 
 app = Flask(__name__)
 
 # ============================================================
-# SETTINGS
+# CONFIGURATION
 # ============================================================
 
-LAPTOP_IP = "10.120.109.216"
-PORT = 5050
-
 DATABASE = "certificates.db"
+
+# Render provides PORT automatically.
+# Locally it will use 5050.
+PORT = int(os.environ.get("PORT", 5050))
+
+# ------------------------------------------------------------
+# PUBLIC URL
+# ------------------------------------------------------------
+# When deployed on Render, set this environment variable:
+#
+# BASE_URL=https://your-app-name.onrender.com
+#
+# If BASE_URL is not set, the app automatically uses the
+# laptop's local IP for local-network testing.
+# ------------------------------------------------------------
+
+def get_local_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
+LAPTOP_IP = get_local_ip()
+
+BASE_URL = os.environ.get(
+    "BASE_URL",
+    f"http://{LAPTOP_IP}:{PORT}"
+).rstrip("/")
 
 
 # ============================================================
@@ -22,20 +57,29 @@ DATABASE = "certificates.db"
 def init_db():
 
     conn = sqlite3.connect(DATABASE)
+
     cursor = conn.cursor()
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS certificates (
+
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+
             serial_number TEXT NOT NULL,
+
             owner_name TEXT NOT NULL,
+
             instrument_type TEXT NOT NULL,
+
             verification_date TEXT NOT NULL,
+
             expiry_date TEXT NOT NULL
+
         )
     """)
 
     conn.commit()
+
     conn.close()
 
 
@@ -50,37 +94,68 @@ def home():
 
 
 # ============================================================
-# SUBMIT CERTIFICATE
+# CREATE CERTIFICATE
 # ============================================================
 
 @app.route("/submit", methods=["POST"])
 def submit():
 
+    # --------------------------------------------------------
+    # GET FORM DATA
+    # --------------------------------------------------------
+
     serial_number = request.form.get(
-        "serial_number", ""
+        "serial_number",
+        ""
     ).strip()
 
     owner_name = request.form.get(
-        "owner_name", ""
+        "owner_name",
+        ""
     ).strip()
 
     instrument_type = request.form.get(
-        "instrument_type", ""
+        "instrument_type",
+        ""
     ).strip()
 
     verification_date = request.form.get(
-        "verification_date", ""
+        "verification_date",
+        ""
     ).strip()
 
     expiry_date = request.form.get(
-        "expiry_date", ""
+        "expiry_date",
+        ""
     ).strip()
 
+
     # --------------------------------------------------------
-    # SAVE TO DATABASE
+    # BASIC VALIDATION
+    # --------------------------------------------------------
+
+    if not serial_number:
+        return "Serial number is required", 400
+
+    if not owner_name:
+        return "Owner name is required", 400
+
+    if not instrument_type:
+        return "Instrument type is required", 400
+
+    if not verification_date:
+        return "Verification date is required", 400
+
+    if not expiry_date:
+        return "Expiry date is required", 400
+
+
+    # --------------------------------------------------------
+    # INSERT INTO DATABASE
     # --------------------------------------------------------
 
     conn = sqlite3.connect(DATABASE)
+
     cursor = conn.cursor()
 
     cursor.execute("""
@@ -104,30 +179,25 @@ def submit():
     certificate_id = cursor.lastrowid
 
     conn.commit()
+
     conn.close()
 
+
     # --------------------------------------------------------
-    # CERTIFICATE ID
+    # CERTIFICATE CODE
     # --------------------------------------------------------
 
     certificate_code = f"CERT-{certificate_id:04d}"
 
+
     # --------------------------------------------------------
-    # VERIFICATION URL
+    # QR VERIFICATION URL
     # --------------------------------------------------------
 
     verification_url = (
-        f"http://{LAPTOP_IP}:{PORT}"
-        f"/verify/{certificate_code}"
+        f"{BASE_URL}/verify/{certificate_code}"
     )
 
-    print()
-    print("NEW CERTIFICATE CREATED")
-    print("-----------------------")
-    print("Certificate ID :", certificate_code)
-    print("Verification URL:")
-    print(verification_url)
-    print()
 
     # --------------------------------------------------------
     # CREATE QR FOLDER
@@ -143,8 +213,9 @@ def submit():
         exist_ok=True
     )
 
+
     # --------------------------------------------------------
-    # CREATE QR CODE
+    # QR FILE NAME
     # --------------------------------------------------------
 
     qr_filename = (
@@ -156,17 +227,28 @@ def submit():
         qr_filename
     )
 
+
+    # --------------------------------------------------------
+    # CREATE QR CODE
+    # --------------------------------------------------------
+
     qr = qrcode.make(
         verification_url
     )
 
-    qr.save(qr_path)
+    qr.save(
+        qr_path
+    )
 
-    # URL used by certificate.html
+
+    # --------------------------------------------------------
+    # URL USED BY HTML
+    # --------------------------------------------------------
 
     qr_url = (
         f"/static/qr/{qr_filename}"
     )
+
 
     # --------------------------------------------------------
     # SHOW CERTIFICATE
@@ -199,7 +281,7 @@ def submit():
 def verify(certificate_id):
 
     # --------------------------------------------------------
-    # REMOVE CERT- PREFIX
+    # REMOVE CERT PREFIX
     # --------------------------------------------------------
 
     if certificate_id.startswith("CERT-"):
@@ -208,6 +290,7 @@ def verify(certificate_id):
             "CERT-",
             ""
         )
+
 
     # --------------------------------------------------------
     # CONVERT ID TO INTEGER
@@ -225,6 +308,7 @@ def verify(certificate_id):
             "verify.html",
             certificate=None
         )
+
 
     # --------------------------------------------------------
     # SEARCH DATABASE
@@ -244,7 +328,9 @@ def verify(certificate_id):
             instrument_type,
             verification_date,
             expiry_date
+
         FROM certificates
+
         WHERE id = ?
     """, (
         certificate_id,
@@ -253,6 +339,7 @@ def verify(certificate_id):
     certificate = cursor.fetchone()
 
     conn.close()
+
 
     # --------------------------------------------------------
     # SHOW VERIFICATION PAGE
@@ -286,16 +373,29 @@ if __name__ == "__main__":
     print("Starting server...")
     print()
 
-    print("Laptop IP :", LAPTOP_IP)
-    print("Port      :", PORT)
+    print(f"Laptop IP : {LAPTOP_IP}")
+    print(f"Port      : {PORT}")
     print()
 
     print("Local URL:")
-    print(f"http://127.0.0.1:{PORT}")
+    print(
+        f"http://127.0.0.1:{PORT}"
+    )
+
     print()
 
     print("Network URL:")
-    print(f"http://{LAPTOP_IP}:{PORT}")
+    print(
+        f"http://{LAPTOP_IP}:{PORT}"
+    )
+
+    print()
+
+    print("QR Base URL:")
+    print(
+        BASE_URL
+    )
+
     print()
 
     print("========================================")
@@ -303,14 +403,14 @@ if __name__ == "__main__":
     print("========================================")
     print()
 
+
     # --------------------------------------------------------
-    # WAITRESS SERVER
+    # START FLASK
     # --------------------------------------------------------
 
-    from waitress import serve
-
-    serve(
-        app,
+    app.run(
         host="0.0.0.0",
-        port=PORT
+        port=PORT,
+        debug=False,
+        use_reloader=False
     )
