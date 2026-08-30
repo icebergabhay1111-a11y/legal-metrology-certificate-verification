@@ -2,7 +2,8 @@
 <html>
 
 <head>
-    <title>Certificate Verification</title>
+    <title>Certificate Status</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
 
     <style>
 
@@ -10,11 +11,11 @@
             background: #f2f2f2;
             font-family: Arial, sans-serif;
             margin: 0;
-            padding: 40px;
+            padding: 40px 16px;
         }
 
         .verification-box {
-            width: 700px;
+            max-width: 700px;
             margin: auto;
             padding: 40px;
             background: white;
@@ -24,39 +25,63 @@
 
         h1 {
             text-align: center;
-            margin-bottom: 10px;
+            margin-bottom: 4px;
+            font-size: 28px;
         }
 
-        .verified {
+        .checked-on {
             text-align: center;
-            color: green;
-            font-size: 30px;
-            font-weight: bold;
-            margin: 25px 0;
+            color: #666;
+            font-size: 15px;
+            margin-bottom: 25px;
         }
 
-        .not-found {
+        .status {
             text-align: center;
-            color: red;
-            font-size: 30px;
+            font-size: 34px;
             font-weight: bold;
-            margin: 25px 0;
+            margin: 20px 0 6px 0;
+            padding: 18px 10px;
+            border: 3px solid;
         }
+
+        .status-sub {
+            text-align: center;
+            font-size: 17px;
+            margin-bottom: 22px;
+        }
+
+        .valid          { color: #12621f; border-color: #12621f; background: #eaf6ec; }
+        .expiring       { color: #8a5a00; border-color: #8a5a00; background: #fdf3e0; }
+        .expired        { color: #a11414; border-color: #a11414; background: #fdeaea; }
+        .notfound       { color: #444;    border-color: #444;    background: #f0f0f0; }
 
         .row {
-            font-size: 20px;
-            padding: 15px;
+            font-size: 18px;
+            padding: 12px 4px;
             border-bottom: 1px solid #ddd;
         }
 
         .label {
             font-weight: bold;
+            display: inline-block;
+            min-width: 250px;
         }
 
         .message {
             text-align: center;
-            font-size: 18px;
-            margin-top: 25px;
+            font-size: 16px;
+            margin-top: 22px;
+            color: #444;
+        }
+
+        .note {
+            margin-top: 22px;
+            padding-top: 14px;
+            border-top: 1px solid #ddd;
+            font-size: 13px;
+            color: #666;
+            line-height: 1.5;
         }
 
     </style>
@@ -67,56 +92,87 @@
 
     <div class="verification-box">
 
-        <h1>Certificate Verification</h1>
+        <h1>Certificate Status</h1>
 
-        {% if certificate %}
+        <div class="checked-on">
+            Status as on {{ checked_on }}
+        </div>
 
-            <div class="verified">
-                ✓ CERTIFICATE VERIFIED
+        {% if status == "VALID" %}
+            <div class="status valid">VALID</div>
+            <div class="status-sub">
+                Valid for a further {{ days }} day{{ '' if days == 1 else 's' }}.
             </div>
 
-            <div class="row">
-                <span class="label">Certificate ID:</span>
-                {{ certificate[0] }}
+        {% elif status == "EXPIRING SOON" %}
+            <div class="status expiring">EXPIRING SOON</div>
+            <div class="status-sub">
+                Expires in {{ days }} day{{ '' if days == 1 else 's' }}.
+                The holder is reminded {{ reminder_window }} days before expiry.
             </div>
 
-            <div class="row">
-                <span class="label">Serial Number:</span>
-                {{ certificate[1] }}
-            </div>
-
-            <div class="row">
-                <span class="label">Owner Name:</span>
-                {{ certificate[2] }}
-            </div>
-
-            <div class="row">
-                <span class="label">Instrument Type:</span>
-                {{ certificate[3] }}
-            </div>
-
-            <div class="row">
-                <span class="label">Verification Date:</span>
-                {{ certificate[4] }}
-            </div>
-
-            <div class="row">
-                <span class="label">Expiry Date:</span>
-                {{ certificate[5] }}
-            </div>
-
-            <div class="message">
-                This certificate exists in the official verification database.
+        {% elif status == "EXPIRED" %}
+            <div class="status expired">EXPIRED</div>
+            <div class="status-sub">
+                Expired {{ days }} day{{ '' if days == 1 else 's' }} ago.
+                This instrument must not be used in trade until it is re-verified.
             </div>
 
         {% else %}
+            <div class="status notfound">NOT FOUND</div>
+            <div class="status-sub">
+                No certificate with this identifier exists in the verification database.
+            </div>
+        {% endif %}
 
-            <div class="not-found">
-                ✗ CERTIFICATE NOT FOUND
+
+        {% if certificate %}
+
+            <div class="row">
+                <span class="label">Certificate ID</span>
+                {{ certificate.code }}
             </div>
 
-            <div class="message">
-                The certificate ID could not be found in the verification database.
+            <div class="row">
+                <span class="label">Serial number</span>
+                {{ certificate.serial_number }}
+            </div>
+
+            <div class="row">
+                <span class="label">Owner</span>
+                {{ certificate.owner_name }}
+            </div>
+
+            <div class="row">
+                <span class="label">Instrument type</span>
+                {{ certificate.instrument_type }}
+            </div>
+
+            <div class="row">
+                <span class="label">Class of instrument</span>
+                {{ certificate.instrument_class }}
+            </div>
+
+            <div class="row">
+                <span class="label">Maximum permissible error</span>
+                {{ certificate.max_permissible_error }}
+            </div>
+
+            <div class="row">
+                <span class="label">Verified on</span>
+                {{ certificate.verified_on }}
+            </div>
+
+            <div class="row">
+                <span class="label">Expires on</span>
+                {{ certificate.expires_on }}
+                {% if certificate.reverification_months %}
+                    ({{ certificate.reverification_months }}-month period)
+                {% endif %}
+            </div>
+
+            <div class="note">
+                {{ period_note }}
             </div>
 
         {% endif %}

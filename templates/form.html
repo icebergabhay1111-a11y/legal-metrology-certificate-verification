@@ -1,43 +1,157 @@
 <!DOCTYPE html>
 <html>
+
 <head>
+
     <title>Instrument Verification Application</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <style>
+
+        body {
+            background: #f2f2f2;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 40px 16px;
+        }
+
+        .box {
+            max-width: 640px;
+            margin: auto;
+            padding: 40px;
+            background: white;
+            border: 5px solid #222;
+            box-sizing: border-box;
+        }
+
+        h1 {
+            font-size: 26px;
+            margin-top: 0;
+            margin-bottom: 6px;
+        }
+
+        .lead {
+            color: #555;
+            font-size: 15px;
+            margin-bottom: 26px;
+        }
+
+        label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 6px;
+            font-size: 15px;
+        }
+
+        input, select {
+            width: 100%;
+            padding: 10px;
+            font-size: 15px;
+            box-sizing: border-box;
+            margin-bottom: 18px;
+            border: 1px solid #999;
+        }
+
+        .hint {
+            font-size: 13px;
+            color: #666;
+            margin-top: -13px;
+            margin-bottom: 18px;
+            line-height: 1.45;
+        }
+
+        button {
+            width: 100%;
+            padding: 14px;
+            font-size: 17px;
+            font-weight: bold;
+            background: #1a2f4b;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+
+        .note {
+            margin-top: 24px;
+            padding-top: 14px;
+            border-top: 1px solid #ddd;
+            font-size: 13px;
+            color: #666;
+            line-height: 1.5;
+        }
+
+        .links {
+            margin-top: 14px;
+            font-size: 14px;
+        }
+
+    </style>
+
 </head>
 
 <body>
 
-    <h1>Instrument Verification Application</h1>
+    <div class="box">
 
-    <form action="/submit" method="POST">
+        <h1>Instrument Verification Application</h1>
 
-        <label>Instrument Serial Number:</label>
-        <input type="text" name="serial_number" required>
+        <div class="lead">
+            Apply to have a weighing or measuring instrument verified and stamped.
+        </div>
 
-        <br><br>
+        <form action="/submit" method="POST">
 
-        <label>Owner Name:</label>
-        <input type="text" name="owner_name" required>
+            <label for="serial_number">Instrument serial number</label>
+            <input type="text" id="serial_number" name="serial_number" required>
 
-        <br><br>
+            <label for="owner_name">Owner name</label>
+            <input type="text" id="owner_name" name="owner_name" required>
 
-        <label>Instrument Type:</label>
-        <input type="text" name="instrument_type" required>
+            <label for="instrument_type">Instrument type</label>
+            <select id="instrument_type" name="instrument_type" required>
+                <option value="">Select an instrument type</option>
+                {% for name, months in instrument_types %}
+                    <option value="{{ name }}">{{ name }} — {{ months }} months</option>
+                {% endfor %}
+            </select>
+            <div class="hint">
+                The re-verification period is set by the instrument type. The system
+                calculates the expiry date from it.
+            </div>
 
-        <br><br>
+            <label for="instrument_class">Class of instrument</label>
+            <input type="text" id="instrument_class" name="instrument_class"
+                   placeholder="e.g. Class III">
 
-        <label>Verification Date:</label>
-        <input type="date" name="verification_date" required>
+            <label for="max_permissible_error">Maximum permissible error</label>
+            <input type="text" id="max_permissible_error" name="max_permissible_error"
+                   placeholder="e.g. ± 1 g">
 
-        <br><br>
+            <label for="verification_date">Verification date</label>
+            <input type="date" id="verification_date" name="verification_date"
+                   value="{{ today }}" required>
 
-        <label>Expiry Date:</label>
-        <input type="date" name="expiry_date" required>
+            <label for="expiry_date">Expiry date override (demonstration only)</label>
+            <input type="date" id="expiry_date" name="expiry_date">
+            <div class="hint">
+                Leave this blank in normal use. Fill it with a past date only to show
+                what an expired certificate looks like when scanned.
+            </div>
 
-        <br><br>
+            <button type="submit">Submit application</button>
 
-        <button type="submit">Submit Application</button>
+        </form>
 
-    </form>
+        <div class="links">
+            <a href="/reminders">Officer view — certificates due for re-verification</a>
+        </div>
+
+        <div class="note">
+            {{ period_note }}
+        </div>
+
+    </div>
 
 </body>
+
 </html>

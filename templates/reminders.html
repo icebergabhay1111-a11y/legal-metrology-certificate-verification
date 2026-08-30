@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+
+    <title>Certificates due for re-verification</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <style>
+
+        body {
+            background: #f2f2f2;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 40px 16px;
+        }
+
+        .box {
+            max-width: 940px;
+            margin: auto;
+            padding: 40px;
+            background: white;
+            border: 5px solid #222;
+            box-sizing: border-box;
+        }
+
+        h1 {
+            font-size: 26px;
+            margin-top: 0;
+            margin-bottom: 4px;
+        }
+
+        .lead {
+            color: #555;
+            font-size: 15px;
+            margin-bottom: 26px;
+        }
+
+        h2 {
+            font-size: 19px;
+            margin-top: 30px;
+            margin-bottom: 10px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 15px;
+        }
+
+        th, td {
+            text-align: left;
+            padding: 10px 8px;
+            border-bottom: 1px solid #ddd;
+        }
+
+        th {
+            background: #eef1f5;
+            border-bottom: 2px solid #1a2f4b;
+        }
+
+        .expired td   { color: #a11414; }
+        .due td       { color: #8a5a00; }
+
+        .empty {
+            color: #666;
+            font-size: 15px;
+            padding: 10px 0;
+        }
+
+        .back {
+            margin-top: 26px;
+            font-size: 14px;
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+    <div class="box">
+
+        <h1>Certificates due for re-verification</h1>
+
+        <div class="lead">
+            Officer view as on {{ today }}. The holder is reminded
+            {{ reminder_window }} days before expiry.
+        </div>
+
+        <h2>Expiring within {{ reminder_window }} days</h2>
+
+        {% if due %}
+            <table>
+                <tr>
+                    <th>Certificate</th>
+                    <th>Serial number</th>
+                    <th>Owner</th>
+                    <th>Instrument</th>
+                    <th>Expires on</th>
+                    <th>Days left</th>
+                </tr>
+                {% for c in due %}
+                    <tr class="due">
+                        <td><a href="/verify/{{ c.code }}">{{ c.code }}</a></td>
+                        <td>{{ c.serial_number }}</td>
+                        <td>{{ c.owner_name }}</td>
+                        <td>{{ c.instrument_type }}</td>
+                        <td>{{ c.expires_on }}</td>
+                        <td>{{ c.days }}</td>
+                    </tr>
+                {% endfor %}
+            </table>
+        {% else %}
+            <div class="empty">Nothing falls due in this window.</div>
+        {% endif %}
+
+        <h2>Already expired</h2>
+
+        {% if expired %}
+            <table>
+                <tr>
+                    <th>Certificate</th>
+                    <th>Serial number</th>
+                    <th>Owner</th>
+                    <th>Instrument</th>
+                    <th>Expired on</th>
+                    <th>Days overdue</th>
+                </tr>
+                {% for c in expired %}
+                    <tr class="expired">
+                        <td><a href="/verify/{{ c.code }}">{{ c.code }}</a></td>
+                        <td>{{ c.serial_number }}</td>
+                        <td>{{ c.owner_name }}</td>
+                        <td>{{ c.instrument_type }}</td>
+                        <td>{{ c.expires_on }}</td>
+                        <td>{{ -c.days }}</td>
+                    </tr>
+                {% endfor %}
+            </table>
+        {% else %}
+            <div class="empty">No expired certificates on record.</div>
+        {% endif %}
+
+        <div class="back">
+            <a href="/">Back to the application form</a>
+        </div>
+
+    </div>
+
+</body>
+
+</html>
