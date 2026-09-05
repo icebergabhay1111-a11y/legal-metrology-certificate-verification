@@ -13,6 +13,13 @@ import qrcode
 
 app = Flask(__name__)
 
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
+
+import auth
+app.register_blueprint(auth.auth_bp)
+auth.init_auth_db()
+from auth import role_required, current_user, log as audit_log
+
 # ============================================================
 # CONFIGURATION
 # ============================================================
@@ -164,6 +171,8 @@ def init_db():
         ("instrument_class",       "TEXT"),
         ("max_permissible_error",  "TEXT"),
         ("reverification_months",  "INTEGER"),
+        ("officer_id",             "INTEGER"),
+        ("officer_name",           "TEXT"),
     ]:
         if column not in existing:
             cursor.execute(
@@ -220,7 +229,10 @@ def home():
 # ============================================================
 
 @app.route("/submit", methods=["POST"])
+@role_required("lab_officer", "district_officer", "admin")
 def submit():
+
+    officer = current_user()
 
     # --------------------------------------------------------
     # GET FORM DATA
@@ -253,17 +265,21 @@ def submit():
     # --------------------------------------------------------
 
     if not serial_number:
+        audit_log("certificate rejected", detail="missing serial number")
         return "Serial number is required", 400
 
     if not owner_name:
+        audit_log("certificate rejected", target=serial_number, detail="missing owner name")
         return "Owner name is required", 400
 
     if instrument_type not in REVERIFICATION_MONTHS:
+        audit_log("certificate rejected", target=serial_number, detail="unknown instrument type")
         return "A known instrument type is required", 400
 
     verification_date = parse_date(verification_date_text)
 
     if verification_date is None:
+        audit_log("certificate rejected", target=serial_number, detail="invalid verification date")
         return "A valid verification date is required", 400
 
 
@@ -284,6 +300,7 @@ def submit():
         override = parse_date(expiry_override_text)
 
         if override is None:
+            audit_log("certificate rejected", target=serial_number, detail="invalid expiry override")
             return "The expiry override is not a valid date", 400
 
         expiry_date = override
@@ -307,9 +324,11 @@ def submit():
             expiry_date,
             instrument_class,
             max_permissible_error,
-            reverification_months
+            reverification_months,
+            officer_id,
+            officer_name
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         serial_number,
         owner_name,
@@ -318,7 +337,9 @@ def submit():
         expiry_date.isoformat(),
         instrument_class,
         max_permissible_error,
-        months
+        months,
+        officer["id"],
+        officer["full_name"]
     ))
 
     certificate_id = cursor.lastrowid
@@ -326,6 +347,12 @@ def submit():
     conn.commit()
 
     conn.close()
+
+    audit_log(
+        "certificate issued",
+        target=f"CERT-{certificate_id:04d}",
+        detail=f"serial {serial_number}, owner {owner_name}",
+    )
 
 
     # --------------------------------------------------------
@@ -361,6 +388,8 @@ def submit():
         expiry_date=expiry_date.isoformat(),
 
         reverification_months=months,
+
+        officer_name=officer["full_name"],
 
         period_note=PERIOD_SOURCE_NOTE,
 
@@ -426,7 +455,8 @@ def verify(certificate_id):
             expiry_date,
             instrument_class,
             max_permissible_error,
-            reverification_months
+            reverification_months,
+            officer_name
 
         FROM certificates
 
@@ -484,6 +514,7 @@ def verify(certificate_id):
         "instrument_class": row[6] or "Not recorded",
         "max_permissible_error": row[7] or "Not recorded",
         "reverification_months": row[8],
+        "officer_name": row[9] or "Not recorded",
     }
 
     return render_template(
