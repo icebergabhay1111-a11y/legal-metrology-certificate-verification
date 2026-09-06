@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Audit Log</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <style>
+
+        body {
+            background: #f2f2f2;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 40px 16px;
+        }
+
+        .wrap {
+            max-width: 1000px;
+            margin: auto;
+        }
+
+        .top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+
+        h1 {
+            font-size: 26px;
+            margin: 0;
+        }
+
+        .who a {
+            color: #a11414;
+            text-decoration: none;
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        .panel {
+            background: white;
+            border: 3px solid #222;
+            box-sizing: border-box;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            text-align: left;
+            padding: 9px 16px;
+            font-size: 13px;
+            border-bottom: 1px solid #ddd;
+        }
+
+        th {
+            color: #555;
+            font-size: 11px;
+            text-transform: uppercase;
+            background: #eee;
+        }
+
+        .empty {
+            padding: 18px;
+            color: #888;
+            font-size: 14px;
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+    <div class="wrap">
+
+        <div class="top">
+            <h1>Audit Log — last 200 entries</h1>
+            <div class="who"><a href="{{ url_for('auth.dashboard') }}">Back to dashboard</a></div>
+        </div>
+
+        <div class="panel">
+            {% if entries %}
+                <table>
+                    <tr>
+                        <th>When</th>
+                        <th>Actor</th>
+                        <th>Action</th>
+                        <th>Target</th>
+                        <th>Detail</th>
+                    </tr>
+                    {% for e in entries %}
+                        <tr>
+                            <td>{{ e.at }}</td>
+                            <td>{{ e.actor_name }}</td>
+                            <td>{{ e.action }}</td>
+                            <td>{{ e.target }}</td>
+                            <td>{{ e.detail }}</td>
+                        </tr>
+                    {% endfor %}
+                </table>
+            {% else %}
+                <div class="empty">No entries yet.</div>
+            {% endif %}
+        </div>
+
+    </div>
+
+</body>
+
+</html>

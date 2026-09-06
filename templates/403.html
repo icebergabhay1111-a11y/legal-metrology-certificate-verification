@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Not Allowed</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <style>
+
+        body {
+            background: #f2f2f2;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 40px 16px;
+        }
+
+        .box {
+            max-width: 500px;
+            margin: auto;
+            padding: 40px;
+            background: white;
+            border: 5px solid #a11414;
+            box-sizing: border-box;
+            text-align: center;
+        }
+
+        h1 {
+            color: #a11414;
+            font-size: 26px;
+            margin-bottom: 12px;
+        }
+
+        p {
+            font-size: 16px;
+            color: #444;
+            line-height: 1.6;
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+    <div class="box">
+        <h1>403 — Not Allowed</h1>
+        <p>
+            Your account role
+            {% if role %}(<strong>{{ role }}</strong>){% endif %}
+            does not have access to this page.
+        </p>
+    </div>
+
+</body>
+
+</html>

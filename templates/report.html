@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Report a Suspicious Instrument</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <style>
+
+        body {
+            background: #f2f2f2;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 40px 16px;
+        }
+
+        .box {
+            max-width: 550px;
+            margin: auto;
+            padding: 40px;
+            background: white;
+            border: 5px solid #222;
+            box-sizing: border-box;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 8px;
+            font-size: 26px;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            font-size: 15px;
+            margin-bottom: 28px;
+        }
+
+        label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 6px;
+            font-size: 15px;
+        }
+
+        input[type="text"],
+        textarea {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 20px;
+            font-size: 16px;
+            border: 1px solid #999;
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+        }
+
+        textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            font-size: 17px;
+            font-weight: bold;
+            background: #222;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #444;
+        }
+
+        .error {
+            background: #fdeaea;
+            border: 2px solid #a11414;
+            color: #a11414;
+            padding: 10px 12px;
+            margin-bottom: 20px;
+            font-size: 15px;
+            text-align: center;
+        }
+
+        .success {
+            background: #eaf6ec;
+            border: 3px solid #12621f;
+            color: #12621f;
+            padding: 20px;
+            text-align: center;
+            font-size: 17px;
+            font-weight: bold;
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+    <div class="box">
+
+        <h1>Report a Suspicious Instrument</h1>
+        <div class="subtitle">No login required.</div>
+
+        {% if submitted %}
+            <div class="success">
+                Thank you. Your report has been recorded and sent to the officer
+                dashboard for review.
+            </div>
+        {% else %}
+
+            {% if error %}
+                <div class="error">{{ error }}</div>
+            {% endif %}
+
+            <form method="POST">
+                <label for="serial_number">Serial number of the instrument</label>
+                <input type="text" id="serial_number" name="serial_number" required>
+
+                <label for="description">What did you notice?</label>
+                <textarea id="description" name="description" required></textarea>
+
+                <button type="submit">Submit Report</button>
+            </form>
+
+        {% endif %}
+
+    </div>
+
+</body>
+
+</html>
