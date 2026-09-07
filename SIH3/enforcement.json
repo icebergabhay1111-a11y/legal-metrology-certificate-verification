@@ -1,0 +1,65 @@
+ [
+  {
+    "situation": "Instrument in use with an expired certificate",
+    "section": "33",
+    "penalty": "Fine not less than Rs 2,000 and up to Rs 10,000. Second or subsequent offence: imprisonment up to one year and also fine.",
+    "compoundable": true,
+    "compounding_basis": "Section 48(1) covers sections 27 to 39.",
+    "officer_next_step": "Seize under section 15 if evidence is needed; issue notice; offer compounding.",
+    "source": "Legal Metrology Act 2009, page 10"
+  },
+  {
+    "situation": "Instrument altered or tampered with to deceive",
+    "section": "26",
+    "penalty": "Fine up to Rs 50,000. Second and subsequent offence: imprisonment of not less than six months and up to one year, or fine, or both.",
+    "compoundable": false,
+    "compounding_basis": "Section 26 is omitted from section 48(1) (which only lists section 25, 27-39, and 45-47).",
+    "officer_next_step": "Seize instrument and records under section 15; file complaint for court prosecution.",
+    "source": "Legal Metrology Act 2009, page 9"
+  },
+  {
+    "situation": "Stamp counterfeited, removed, or moved from another instrument",
+    "section": "44",
+    "penalty": "Imprisonment of not less than six months and up to one year. Second or subsequent offence: imprisonment not less than six months and up to five years.",
+    "compoundable": false,
+    "compounding_basis": "Section 44 is not included in section 48(1); cannot be settled by compounding.",
+    "officer_next_step": "Seize counterfeited stamp/instrument under section 15; initiate formal criminal prosecution.",
+    "source": "Legal Metrology Act 2009, page 12"
+  },
+  {
+    "situation": "A Government Approved Test Centre acting outside its approval",
+    "section": "37(1)",
+    "penalty": "Fine up to Rs 1,00,000.",
+    "compoundable": true,
+    "compounding_basis": "Section 48(1) covers sections 27 to 39.",
+    "officer_next_step": "Issue show-cause notice; recommend suspension or cancellation of approval; offer compounding under section 48.",
+    "source": "Legal Metrology Act 2009, page 11"
+  },
+  {
+    "situation": "An employee of a GATC wilfully stamping wrongly",
+    "section": "37(2)",
+    "penalty": "Imprisonment up to one year, or fine up to Rs 10,000, or both.",
+    "compoundable": true,
+    "compounding_basis": "Section 48(1) covers sections 27 to 39.",
+    "officer_next_step": "Conduct inquiry; seize irregular stamps/certificates under section 15; initiate proceedings or offer compounding.",
+    "source": "Legal Metrology Act 2009, page 11"
+  },
+  {
+    "situation": "An officer wilfully verifying or stamping wrongly",
+    "section": "43",
+    "penalty": "Imprisonment up to one year, or fine up to Rs 10,000, or both.",
+    "compoundable": false,
+    "compounding_basis": "Section 43 is omitted from section 48(1); mandatory criminal prosecution.",
+    "officer_next_step": "Lodge formal report with Controller/Director for departmental inquiry and prosecution.",
+    "source": "Legal Metrology Act 2009, page 12"
+  },
+  {
+    "situation": "The offence committed by a company, and the question of who is proceeded against",
+    "section": "49",
+    "penalty": "Liable to penalties prescribed for the specific offence committed.",
+    "compoundable": true,
+    "compounding_basis": "Dependent on the underlying substantive offence (applies if underlying section is compoundable under section 48).",
+    "officer_next_step": "Verify company register for nominated responsible person under section 49(2); if none, proceed against all persons in charge and the company itself.",
+    "source": "Legal Metrology Act 2009, page 13"
+  }
+]
