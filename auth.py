@@ -152,7 +152,14 @@ def role_required(*allowed_roles):
             user = current_user()
 
             if user is None:
-                return redirect(url_for("auth.login", next=request.path))
+                # Only carry a "next" redirect for plain page visits (GET).
+                # If someone was blocked while POSTing a form (e.g. /submit),
+                # sending them back with a GET after login would hit the
+                # same "Method Not Allowed" wall the form exists to avoid —
+                # so send them to the homepage instead in that case.
+                if request.method == "GET":
+                    return redirect(url_for("auth.login", next=request.path))
+                return redirect(url_for("auth.login"))
 
             if user["role"] not in allowed_roles:
                 return render_template("403.html", role=user["role"]), 403
