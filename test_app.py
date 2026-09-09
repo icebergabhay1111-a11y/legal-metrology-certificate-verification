@@ -12,6 +12,7 @@ import datetime
 import os
 import re
 import sqlite3
+import time
 
 import pytest
 
@@ -20,18 +21,51 @@ TODAY = datetime.date.today()
 PW = "sahidaam2026"
 
 
+def q(sql):
+    """Run a read-only query and CLOSE the connection.
+
+    Windows will not let you delete a file that still has an open handle on
+    it, so a connection left dangling here makes every teardown blow up with
+    WinError 32. Linux doesn't care. Always use this, never a bare connect().
+    """
+    conn = sqlite3.connect(DB)
+    try:
+        return conn.execute(sql).fetchall()
+    finally:
+        conn.close()
+
+
+def drop_db():
+    """Delete the DB file so every test starts clean.
+
+    Retries for about a second bc Windows can hold the handle for a moment
+    after the last connection closes. If it still won't go, we raise - a
+    stale DB would make a later test fail for a reason that has nothing to
+    do w/ the code.
+    """
+    for attempt in range(5):
+        if not os.path.exists(DB):
+            return
+        try:
+            os.remove(DB)
+            return
+        except PermissionError:
+            time.sleep(0.2)
+    raise RuntimeError(
+        f"could not delete {DB} - something still has it open. "
+        "Close DB Browser for SQLite, or stop the running app, and try again.")
+
+
 @pytest.fixture()
 def app_client():
     """Fresh DB + a test client, for every single test."""
-    if os.path.exists(DB):
-        os.remove(DB)
+    drop_db()
     import importlib
     import app1
     importlib.reload(app1)
     app1.app.config["TESTING"] = True
     yield app1.app.test_client()
-    if os.path.exists(DB):
-        os.remove(DB)
+    drop_db()
 
 
 def login(c, user="lab1"):
@@ -57,14 +91,11 @@ def status_of(c, code):
 # ---------------------------------------------------------------- accounts
 def test_demo_users_exist_after_a_fresh_start(app_client):
     """The Render blocker. A wiped DB must still have working logins."""
-    n = sqlite3.connect(DB).execute("SELECT COUNT(*) FROM users").fetchone()[0]
-    assert n >= 4
+    assert q("SELECT COUNT(*) FROM users")[0][0] >= 4
 
 
 def test_passwords_are_never_stored_in_plain_text(app_client):
-    rows = sqlite3.connect(DB).execute(
-        "SELECT password_hash FROM users").fetchall()
-    for (h,) in rows:
+    for (h,) in q("SELECT password_hash FROM users"):
         assert PW not in h
         assert h.startswith(("pbkdf2:", "scrypt:", "argon2"))
 
@@ -188,18 +219,14 @@ def test_same_serial_different_owner_raises_an_alert(app_client):
     login(app_client)
     issue(app_client, serial="WB-1", owner="Sharma Traders")
     issue(app_client, serial="WB-1", owner="Bharat Fuels")
-    n = sqlite3.connect(DB).execute(
-        "SELECT COUNT(*) FROM fraud_alerts").fetchone()[0]
-    assert n >= 1
+    assert q("SELECT COUNT(*) FROM fraud_alerts")[0][0] >= 1
 
 
 def test_same_serial_same_owner_raises_nothing(app_client):
     login(app_client)
     issue(app_client, serial="WB-1", owner="Sharma Traders")
     issue(app_client, serial="WB-1", owner="Sharma Traders")
-    n = sqlite3.connect(DB).execute(
-        "SELECT COUNT(*) FROM fraud_alerts").fetchone()[0]
-    assert n == 0
+    assert q("SELECT COUNT(*) FROM fraud_alerts")[0][0] == 0
 
 
 # ---------------------------------------------------------------- states
@@ -226,20 +253,16 @@ def test_anyone_can_open_the_report_form(app_client):
 def test_a_public_report_is_saved(app_client):
     app_client.post("/report", data={"serial_number": "WB-9",
                                      "description": "Looks tampered with"})
-    n = sqlite3.connect(DB).execute("SELECT COUNT(*) FROM reports").fetchone()[0]
-    assert n == 1
+    assert q("SELECT COUNT(*) FROM reports")[0][0] == 1
 
 
 def test_an_empty_report_is_refused(app_client):
     app_client.post("/report", data={"serial_number": "", "description": ""})
-    n = sqlite3.connect(DB).execute("SELECT COUNT(*) FROM reports").fetchone()[0]
-    assert n == 0
+    assert q("SELECT COUNT(*) FROM reports")[0][0] == 0
 
 
 # ---------------------------------------------------------------- audit
 def test_actions_are_written_to_the_audit_log(app_client):
     login(app_client); issue(app_client)
-    rows = sqlite3.connect(DB).execute(
-        "SELECT action FROM audit").fetchall()
-    actions = {r[0] for r in rows}
+    actions = {r[0] for r in q("SELECT action FROM audit")}
     assert "login" in actions
