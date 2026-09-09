@@ -1,0 +1,20 @@
+{
+  "state_code": "MZ",
+  "state_name": "Mizoram",
+  "reminder_window_days": 90,
+  "daily_issue_limit": 15,
+  "jurisdictions": ["Aizawl", "Lunglei", "Champhai"],
+  "reverification_months": {
+    "Weight": 24, "Capacity measure": 24, "Length measure": 24,
+    "Measuring tape": 24, "Beam scale": 24, "Counter machine": 24,
+    "Storage tank": 60, "Electronic weighing instrument": 12,
+    "Weighbridge": 12, "Fuel dispensing unit": 12,
+    "Automatic weighing instrument": 12, "Other instrument": 12
+  },
+  "fees_inr": {
+    "Weight": 25, "Weighbridge": 900, "Fuel dispensing unit": 300,
+    "Electronic weighing instrument": 90, "Storage tank": 1200,
+    "Other instrument": 60
+  },
+  "fee_source": "PLACEHOLDER - not yet verified against the Mizoram published fee schedule. Revenue context (verified): Mizoram collected Rs 17.61 lakh under Major Head 1475 / Minor Head 106 in 2023-24 - CAG Finance Accounts 2023-24 Vol II, page 108."
+}

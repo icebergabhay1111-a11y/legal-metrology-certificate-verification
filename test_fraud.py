@@ -1,117 +1,110 @@
-import pytest
-from fraud import (
-    check_duplicate_serial,
-    check_out_of_jurisdiction,
-    check_improbable_volume,
-    check_lapsed_and_reregistered,
-    run_all_checks,
-)
+"""
+test_fraud.py - two tests per rule: one where it should stay quiet,
+one where it should fire.
 
-# Rule 1 Tests: Duplicate serial
-def test_duplicate_serial_silent():
-    cert = {"serial_number": "WB-4471", "owner_name": "Owner A"}
-    existing = [{"serial_number": "WB-4471", "owner_name": "Owner A", "is_live": True, "certificate_id": "CERT-0001"}]
-    assert check_duplicate_serial(cert, existing) is None
+Run:  python -m pytest -q
 
+Why both halves matter: a rule that fires on an innocent case is worse
+than no rule at all, bc it accuses the wrong person.
+"""
 
-def test_duplicate_serial_fires():
-    cert = {"serial_number": "WB-4471", "owner_name": "Owner B"}
-    existing = [{"serial_number": "WB-4471", "owner_name": "Owner A", "is_live": True, "certificate_id": "CERT-0007"}]
-    result = check_duplicate_serial(cert, existing)
-    assert result == "Serial WB-4471 is already certified to a different owner under CERT-0007."
+from datetime import date, timedelta
+
+import fraud
+
+TODAY = date.today()
 
 
-# Rule 2 Tests: Out of jurisdiction
-def test_out_of_jurisdiction_silent():
-    cert = {
-        "officer_id": "LMO-14",
-        "officer_jurisdiction": "Siliguri",
-        "instrument_jurisdiction": "Siliguri",
+def d(days):
+    """Shorthand: d(-30) = 30 days ago, as a 'YYYY-MM-DD' string."""
+    return (TODAY + timedelta(days=days)).isoformat()
+
+
+def cert(**kw):
+    base = {
+        "code": "CERT-0002", "serial_number": "WB-4471",
+        "owner_name": "Sharma Traders", "instrument_type": "Weighbridge",
+        "verified_on": d(0), "expires_on": d(365),
+        "officer_id": 2, "officer_name": "Priya Lab Officer",
+        "jurisdiction": "Chennai", "state_code": "TN",
     }
-    assert check_out_of_jurisdiction(cert) is None
+    base.update(kw)
+    return base
 
 
-def test_out_of_jurisdiction_fires():
-    cert = {
-        "officer_id": "LMO-14",
-        "officer_jurisdiction": "Kolkata North",
-        "instrument_jurisdiction": "Siliguri",
-    }
-    result = check_out_of_jurisdiction(cert)
-    assert result == "Officer LMO-14 is assigned to Kolkata North; this instrument is in Siliguri."
+LMO = {"id": 2, "full_name": "Priya Lab Officer", "jurisdiction": "Chennai",
+       "state_code": "TN", "kind": "lmo"}
+
+GATC = {"id": 9, "full_name": "VIT Test Centre", "kind": "gatc",
+        "approved_state": "TN", "approved_categories": ["weighbridge", "weight"]}
 
 
-# Rule 3 Tests: Improbable volume
-def test_improbable_volume_silent():
-    config = {"max_daily_certificates_per_officer": 40}
-    cert = {"officer_id": "LMO-14", "issue_date": "2026-09-04"}
-    existing = [{"officer_id": "LMO-14", "issue_date": "2026-09-04"}] * 30
-    assert check_improbable_volume(cert, existing, config) is None
+# ---------------------------------------------------------------- rule 1
+def test_duplicate_serial_quiet_when_same_owner():
+    old = cert(code="CERT-0001")
+    assert fraud.check_duplicate_serial(cert(), [old]) is None
 
 
-def test_improbable_volume_fires():
-    config = {"max_daily_certificates_per_officer": 40}
-    cert = {"officer_id": "LMO-14", "issue_date": "2026-09-04"}
-    existing = [{"officer_id": "LMO-14", "issue_date": "2026-09-04"}] * 60
-    result = check_improbable_volume(cert, existing, config)
-    assert result == "Officer LMO-14 has issued 61 certificates today; the configured limit is 40."
+def test_duplicate_serial_fires_on_different_owner():
+    old = cert(code="CERT-0001", owner_name="Bharat Fuels")
+    msg = fraud.check_duplicate_serial(cert(), [old])
+    assert msg is not None and "CERT-0001" in msg
 
 
-# Rule 4 Tests: Lapsed and re-registered
-def test_lapsed_and_reregistered_silent():
-    cert = {
-        "serial_number": "FDU-1104",
-        "owner_name": "New Owner",
-        "is_reverified": True,
-    }
-    existing = [
-        {
-            "serial_number": "FDU-1104",
-            "owner_name": "Old Owner",
-            "is_expired": True,
-            "expiry_date": "2026-07-26",
-        }
-    ]
-    assert check_lapsed_and_reregistered(cert, existing) is None
+# ---------------------------------------------------------------- rule 2
+def test_jurisdiction_quiet_when_officer_in_own_area():
+    assert fraud.check_out_of_jurisdiction(cert(), LMO) is None
 
 
-def test_lapsed_and_reregistered_fires():
-    cert = {
-        "serial_number": "FDU-1104",
-        "owner_name": "New Owner",
-        "is_reverified": False,
-    }
-    existing = [
-        {
-            "serial_number": "FDU-1104",
-            "owner_name": "Old Owner",
-            "is_expired": True,
-            "expiry_date": "2026-07-26",
-        }
-    ]
-    result = check_lapsed_and_reregistered(cert, existing)
-    assert result == "Serial FDU-1104 expired on 2026-07-26 and has been re-registered without re-verification."
+def test_jurisdiction_fires_when_officer_out_of_area():
+    msg = fraud.check_out_of_jurisdiction(cert(jurisdiction="Siliguri"), LMO)
+    assert msg is not None and "Siliguri" in msg
 
 
-# Integration Test
-def test_run_all_checks():
-    config = {"max_daily_certificates_per_officer": 40}
-    cert = {
-        "serial_number": "WB-4471",
-        "owner_name": "Owner B",
-        "officer_id": "LMO-14",
-        "officer_jurisdiction": "Kolkata North",
-        "instrument_jurisdiction": "Siliguri",
-        "issue_date": "2026-09-04",
-        "is_reverified": False,
-    }
-    existing = [
-        {
-            "serial_number": "WB-4471",
-            "owner_name": "Owner A",
-            "is_live": True,
-            "certificate_id": "CERT-0007",
-        }
-    ]
-    issues = run_all_checks(cert, existing, config)
-    assert len(issues) == 2
+def test_gatc_fires_outside_approved_state():
+    msg = fraud.check_out_of_jurisdiction(cert(state_code="WB"), GATC)
+    assert msg is not None and "TN" in msg
+
+
+def test_gatc_fires_on_unapproved_category():
+    msg = fraud.check_out_of_jurisdiction(
+        cert(instrument_type="Storage tank"), GATC)
+    assert msg is not None and "Storage tank" in msg
+
+
+# ---------------------------------------------------------------- rule 3
+def test_volume_quiet_under_limit():
+    assert fraud.check_improbable_volume(LMO, [cert()] * 10, limit=40) is None
+
+
+def test_volume_fires_over_limit():
+    msg = fraud.check_improbable_volume(LMO, [cert()] * 61, limit=40)
+    assert msg is not None and "61" in msg
+
+
+# ---------------------------------------------------------------- rule 4
+def test_lapsed_quiet_when_reverified_after_expiry():
+    old = cert(code="CERT-0001", owner_name="Bharat Fuels",
+               expires_on=d(-30), verified_on=d(-395))
+    new = cert(verified_on=d(-1))          # verified AFTER the old lapsed
+    assert fraud.check_lapsed_reregistration(new, [old]) is None
+
+
+def test_lapsed_fires_when_never_reverified():
+    old = cert(code="CERT-0001", owner_name="Bharat Fuels",
+               expires_on=d(-30), verified_on=d(-395))
+    new = cert(verified_on=d(-60))         # verified BEFORE the old lapsed
+    msg = fraud.check_lapsed_reregistration(new, [old])
+    assert msg is not None and "without re-verification" in msg
+
+
+# ---------------------------------------------------------------- all
+def test_run_all_clean_case_returns_nothing():
+    assert fraud.run_all_checks(cert(), [], LMO, [], 40) == []
+
+
+def test_run_all_collects_more_than_one_problem():
+    old = cert(code="CERT-0001", owner_name="Bharat Fuels")
+    problems = fraud.run_all_checks(
+        cert(jurisdiction="Siliguri"), [old], LMO, [cert()] * 61, 40)
+    assert len(problems) >= 3

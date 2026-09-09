@@ -1,0 +1,1745 @@
+From 880ffe87741756e3bd5274259cbf08b8ad3dcf82 Mon Sep 17 00:00:00 2001
+From: Team SahiDaam <noreply@anthropic.com>
+Date: Wed, 9 Sep 2026 17:12:58 +0000
+Subject: [PATCH] Fix the login blocker, add signing, fraud rules, State config
+ and tests
+
+THE BLOCKER
+Login was impossible on the deployed site. Not because Render forbids
+passwords - because Render's free filesystem is ephemeral, so
+certificates.db (incl. the users table) is wiped on every redeploy,
+and there is no shell on the free plan to run seed_users.py. The site
+had zero users. auth.ensure_demo_users() now recreates the accounts on
+every startup, idempotently, with passwords overridable by env var.
+
+SECURITY
+- /reminders had no access check at all. Any visitor could read the
+  officer's whole due-list. Now behind role_required.
+- The expiry-date override was still on the form and still honoured, so
+  a certificate could show a 12-month period next to an expiry three
+  years out. Field removed, code path removed.
+- A verification date in the future was accepted. Now rejected.
+
+ADDED
+- signing.py: Ed25519 signature over the certificate fields. The status
+  page shows VERIFIED or NOT VERIFIED. Editing any stored field breaks it.
+- fraud.py: the four checks (duplicate serial, out of jurisdiction,
+  improbable daily volume, lapsed-and-re-registered) as pure functions.
+- config.py + states/: per-State fees, periods, reminder window and
+  daily limit as data. Adding a State is a new JSON file, not a code change.
+- enforcement.json moved to the repo root and wired in: an EXPIRED
+  certificate now shows the section, the penalty and whether it can be
+  compounded.
+- test_app.py and test_fraud.py: 43 tests, all passing.
+- DEPLOY.md: why login failed, and Render vs Netlify vs Neon.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01FzWfoKSihAheMWJpZASQVD
+---
+ .gitignore                                |   2 +
+ DEPLOY.md                                 | 143 +++++++++++
+ app1.py                                   | 278 +++++++++++++++-------
+ auth.py                                   |  71 +++++-
+ config.py                                 | 121 ++++++++++
+ SIH3/enforcement.json => enforcement.json |   0
+ fraud.py                                  | 159 +++++++++++++
+ requirements.txt                          |   1 +
+ signing.py                                | 124 ++++++++++
+ states/DL.json                            |  20 ++
+ states/MZ.json                            |  20 ++
+ states/TN.json                            |  20 ++
+ templates/form.html                       |  20 +-
+ templates/verify.html                     |  41 ++++
+ test_app.py                               | 245 +++++++++++++++++++
+ test_fraud.py                             | 110 +++++++++
+ 16 files changed, 1279 insertions(+), 96 deletions(-)
+ create mode 100644 DEPLOY.md
+ create mode 100644 config.py
+ rename SIH3/enforcement.json => enforcement.json (100%)
+ create mode 100644 fraud.py
+ create mode 100644 signing.py
+ create mode 100644 states/DL.json
+ create mode 100644 states/MZ.json
+ create mode 100644 states/TN.json
+ create mode 100644 test_app.py
+ create mode 100644 test_fraud.py
+
+diff --git a/.gitignore b/.gitignore
+index a3aa952..f78e6d3 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -2,3 +2,5 @@
+ __pycache__/
+ *.pyc
+ certificates.db
++signing_key.pem
++.pytest_cache/
+diff --git a/DEPLOY.md b/DEPLOY.md
+new file mode 100644
+index 0000000..262384d
+--- /dev/null
++++ b/DEPLOY.md
+@@ -0,0 +1,143 @@
++# DEPLOY.md — hosting, and why login kept failing
++
++Team SahiDaam · SIH26036 · written 9 September 2026
++
++---
++
++## 1. The bug Vaibhavi hit — it was not what we thought
++
++We believed *"the free Render plan doesn't allow passwords."* That is not true.
++Render runs Flask sessions and hashed passwords perfectly well on the free plan.
++
++The real cause is one line in Render's own docs:
++
++> "any changes to your web service's filesystem (uploaded images, local SQLite
++> databases, etc.) are **lost** every time the service redeploys, restarts, or
++> spins down."
++> — <https://render.com/docs/free>, read 9 September 2026
++
++Our users live in `certificates.db`. That file is gitignored, so it is created
++fresh and **empty** on every boot. `seed_users.py` was meant to fill it, but the
++free plan gives you no shell to run it in. So the live site had **zero users**,
++and nobody could log in. Nothing to do w/ passwords being banned.
++
++Two more free-plan facts from the same page, both matter tomorrow:
++
++> "Render **spins down** a Free web service that goes 15 minutes without
++> receiving any inbound traffic." … "This process takes about one minute."
++
++> "**Free Render Postgres databases expire 30 days after creation.**"
++
++**Open the site ~5 minutes before the review and keep the tab open**, or the
++first judge to scan the QR waits a minute staring at a blank page.
++
++---
++
++## 2. What we changed to fix it
++
++`auth.py` now has `ensure_demo_users()`, called on every startup from `app1.py`.
++It creates the demo accounts if they are missing, and skips them if they exist,
++i.e. it is safe to run a thousand times. So however often Render wipes the disk,
++the logins come back by themselves.
++
++| Username | Password | Role | State |
++|---|---|---|---|
++| `trader1` | `sahidaam2026` | trader | TN |
++| `lab1` | `sahidaam2026` | lab officer | TN |
++| `district1` | `sahidaam2026` | district officer | TN |
++| `admin1` | `sahidaam2026` | admin | TN |
++| `mz1` | `sahidaam2026` | lab officer | **MZ** (for the two-State demo) |
++
++Set env vars `PW_TRADER`, `PW_LAB`, `PW_DISTRICT`, `PW_ADMIN`, `PW_MZ` on Render
++to use real passwords instead. No code change needed.
++
++**Certificates still vanish on redeploy.** That is fine for a demo — just
++re-create the demo certificates after your last deploy. Section 4 fixes it
++properly, but *not tonight*.
++
++---
++
++## 3. Netlify vs Render — the team asked, so here is the answer
++
++**Netlify cannot host this app.** Not "is worse at" — cannot.
++
++Netlify's own function API reference says:
++
++> "Use this API reference to write serverless function files with **JavaScript or
++> TypeScript**."
++> — <https://docs.netlify.com/build/functions/api/>, read 9 September 2026
++
++**Python is not a supported language for Netlify Functions.** And Netlify runs
++short-lived serverless functions, not a long-running `gunicorn app1:app` process.
++Moving to Netlify means rewriting the entire application in JavaScript. Netlify
++*does* now offer a managed Postgres, but a database is no use if the app cannot run.
++
++| | Render (free) | Netlify (free) |
++|---|---|---|
++| Runs Python / Flask | **Yes** | **No** — JS/TS functions only |
++| Long-running server (gunicorn) | Yes | No — serverless functions |
++| Server-side sessions + password login | Yes | Only if rewritten in JS |
++| Managed database | Postgres, **expires after 30 days** | Managed Postgres |
++| File storage survives restart | **No** — ephemeral | No |
++| Sleeps when idle | Yes, after 15 min; ~1 min to wake | Functions are on demand |
++| Work to migrate our app | none, we are on it | rewrite everything |
++
++**Verdict: stay on Render.** Tell the team plainly — Netlify is a good product
++for static sites and JavaScript, and the wrong tool for a Python server.
++
++---
++
++## 4. If we want the data to survive — do this AFTER the review
++
++The cleanest free fix is to keep Render for the app and put the database on
++**Neon**, a free hosted Postgres. Their plans page, read 9 September 2026
++(<https://neon.com/docs/introduction/plans>):
++
++- **0.5 GB storage per project**, up to 100 projects, **$0/month**
++- 100 CU-hours per project per month
++- Compute **scales to zero after 5 minutes idle** and that "cannot be disabled"
++  on the free plan — so the first query after a quiet spell is slow, the same
++  trade-off Render already has
++- Unlike Render's own free Postgres, **it does not expire after 30 days**
++
++Migration sketch (about two hours, **do not attempt it the night before**):
++
++1. Make a Neon project, copy the connection string.
++2. On Render add env var `DATABASE_URL` = that string.
++3. `pip install psycopg[binary]` and add it to `requirements.txt`.
++4. Replace `sqlite3.connect(DATABASE)` with a small helper that uses Postgres
++   when `DATABASE_URL` is set and SQLite when it is not, so local dev keeps working.
++5. Change `AUTOINCREMENT` to `SERIAL`, and `?` placeholders to `%s`.
++
++**Known trap:** some providers hand you a URL beginning `postgres://`, which
++SQLAlchemy no longer accepts. Fix it in one line before connecting:
++
++```python
++url = os.environ["DATABASE_URL"].replace("postgres://", "postgresql://", 1)
++```
++
++### What we rejected, and why
++
++- **PythonAnywhere free** — their pricing page, read 9 September 2026, lists the
++  free Beginner account as 1 web app, 512 MB storage, 100 CPU-seconds a day, and
++  **no MySQL or PostgreSQL access included**. Lots of older advice online says the
++  free tier gives you MySQL. Going by the page today, it does not. So it does not
++  solve our problem.
++- **Render's own free Postgres** — expires 30 days after creation. Fine for a
++  demo, wrong for anything we would say is production.
++- **Supabase, Railway, Fly.io** — not checked in time. If anyone asks, say we
++  compared Render, Netlify, Neon and PythonAnywhere and have not evaluated the
++  others. Do not guess at their terms.
++
++---
++
++## 5. Env vars to set on Render
++
++| Name | Value | Why |
++|---|---|---|
++| `BASE_URL` | `https://legal-metrology-certificate-verification.onrender.com` | Without it the QR points at a private IP and no phone can open it |
++| `SECRET_KEY` | any long random string | Signs the login session cookie. The default is `dev-secret-change-me` — change it |
++| `SIGNING_KEY` | output of `python signing.py --print-key` | Keeps certificate signatures valid across redeploys. Without it a new key is made each boot and old certificates read "NOT VERIFIED" |
++| `PW_LAB` etc. | real passwords | Optional, replaces the demo password |
++
++Start command stays `gunicorn app1:app`.
+diff --git a/app1.py b/app1.py
+index b966cb6..fd20b27 100644
+--- a/app1.py
++++ b/app1.py
+@@ -1,3 +1,32 @@
++"""
++app1.py - the whole web app.
++
++Team SahiDaam | SIH26036 | Online Verification System for Weighing and
++Measuring Instruments.
++
++WHAT EACH FILE DOES
++    app1.py    this file - routes, DB tables, issuing a certificate
++    auth.py    login, the 4 roles, audit log, dashboard, public reports
++    config.py  reads states/*.json + enforcement.json
++    signing.py Ed25519 signature so a fake cert can be spotted
++    fraud.py   the 4 "catch a faker" rules (pure functions, no DB)
++    states/    one JSON file per State. Add a file = add a State.
++
++RUN IT LOCALLY
++    pip install -r requirements.txt
++    python app1.py           -> http://127.0.0.1:5050
++    Login: lab1 / sahidaam2026   (see auth.py DEMO_USERS)
++
++RUN THE TESTS
++    python -m pytest -q      -> should say 43 passed
++
++DEPLOY
++    Start command: gunicorn app1:app
++    Env vars to set: BASE_URL, SECRET_KEY, SIGNING_KEY
++    See DEPLOY.md for the hosting comparison + why the DB keeps
++    getting wiped on Render free.
++"""
++
+ from flask import Flask, render_template, request
+ from datetime import date, datetime, timedelta
+ import sqlite3
+@@ -16,8 +45,13 @@ app = Flask(__name__)
+ app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
+ 
+ import auth
++import config          # per-State settings + Shreyash's enforcement.json
++import signing         # Ed25519 signature on every certificate
++import fraud           # Krishna's four "catch a faker" rules
++
+ app.register_blueprint(auth.auth_bp)
+ auth.init_auth_db()
++auth.ensure_demo_users()   # makes login work after every deploy - see auth.py
+ from auth import role_required, current_user, log as audit_log
+ 
+ # ============================================================
+@@ -26,19 +60,17 @@ from auth import role_required, current_user, log as audit_log
+ 
+ DATABASE = "certificates.db"
+ 
+-# Render provides PORT automatically.
+-# Locally it will use 5050.
++# Render sets PORT for us. Locally we use 5050.
+ PORT = int(os.environ.get("PORT", 5050))
+ 
+ # ------------------------------------------------------------
+ # PUBLIC URL
+ # ------------------------------------------------------------
+-# When deployed on Render, set this environment variable:
+-#
+-# BASE_URL=https://your-app-name.onrender.com
+-#
+-# If BASE_URL is not set, the app automatically uses the
+-# laptop's local IP for local-network testing.
++# On Render set this env var:
++#     BASE_URL=https://your-app-name.onrender.com
++# If it's not set we fall back to the laptop's local IP, which is fine
++# for testing on the same wifi but useless for a QR a judge scans.
++# i.e. ALWAYS set BASE_URL before a demo.
+ # ------------------------------------------------------------
+ 
+ def get_local_ip():
+@@ -61,50 +93,32 @@ BASE_URL = os.environ.get(
+ 
+ 
+ # ============================================================
+-# RE-VERIFICATION PERIODS
++# RE-VERIFICATION PERIODS + PER-STATE SETTINGS
+ # ============================================================
+-# Source: rule 27(2), Legal Metrology (General) Rules, 2011.
++# These used to be hard-coded here. They now live in states/*.json
++# and are read by config.py, bc Act s.53(2)(c) and (d) put the fee,
++# the jurisdiction and the licence period in EACH State's hands.
++# Adding a 4th State = drop a new file in states/. No code change.
+ #
+-# IMPORTANT, AND SAY THIS ALOUD IF ASKED:
+-# These periods are corroborated by two law-firm publications.
+-# The gazette text of rule 27 has not been read by this team.
+-# They are therefore held as unverified and are configurable,
+-# not hard-coded law.
+-#
+-# The number of days before expiry at which a holder is
+-# reminded is also a configuration value, per State.
++# SAY THIS ALOUD IF ASKED: the 24 / 60 / 12 month periods come from
++# rule 27(2) via two law-firm publications. We have NOT read the
++# gazette. So they are config, not hard-coded law.
+ # ------------------------------------------------------------
+ 
+-REVERIFICATION_MONTHS = {
+-    "Weight":                          24,
+-    "Capacity measure":                24,
+-    "Length measure":                  24,
+-    "Measuring tape":                  24,
+-    "Beam scale":                      24,
+-    "Counter machine":                 24,
+-    "Storage tank":                    60,
+-    "Electronic weighing instrument":  12,
+-    "Weighbridge":                     12,
+-    "Fuel dispensing unit":            12,
+-    "Automatic weighing instrument":   12,
+-    "Other instrument":                12,
+-}
+-
+-# Days before expiry at which the holder is reminded.
+-REMINDER_WINDOW_DAYS = int(
+-    os.environ.get("REMINDER_WINDOW_DAYS", 60)
+-)
+-
+-PERIOD_SOURCE_NOTE = (
+-    "Re-verification periods follow rule 27(2), Legal Metrology "
+-    "(General) Rules, 2011. Held as unverified: corroborated by "
+-    "secondary publications, not yet read in the gazette. "
+-    "Configurable per State."
+-)
++PERIOD_SOURCE_NOTE = config.PERIOD_NOTE
++
++# Kept only so old code + tests that still import it keep working.
++REVERIFICATION_MONTHS = config.DEFAULT_MONTHS
++
++# Default reminder window if a State file doesn't set one.
++REMINDER_WINDOW_DAYS = int(os.environ.get("REMINDER_WINDOW_DAYS", 60))
+ 
+ 
+ def add_months(start, months):
+-    """Return start shifted forward by whole months, clamping the day."""
++    """Move a date forward N whole months.
++
++    Clamps the day so 31 Jan + 1 month = 29 Feb, not a crash.
++    """
+ 
+     year = start.year + (start.month - 1 + months) // 12
+     month = (start.month - 1 + months) % 12 + 1
+@@ -119,7 +133,7 @@ def add_months(start, months):
+ 
+ 
+ def parse_date(text):
+-    """Return a date from YYYY-MM-DD, or None."""
++    """'2026-09-09' -> date. Junk -> None. Never raises."""
+ 
+     try:
+         return datetime.strptime(text.strip(), "%Y-%m-%d").date()
+@@ -158,9 +172,8 @@ def init_db():
+     # --------------------------------------------------------
+     # MIGRATION
+     # --------------------------------------------------------
+-    # Older databases were created before class of instrument,
+-    # maximum permissible error and the re-verification period
+-    # were recorded. Add the columns if they are missing.
++    # Old DBs were made before some of these columns existed.
++    # Add whatever is missing. Safe to run every boot.
+     # --------------------------------------------------------
+ 
+     cursor.execute("PRAGMA table_info(certificates)")
+@@ -173,12 +186,27 @@ def init_db():
+         ("reverification_months",  "INTEGER"),
+         ("officer_id",             "INTEGER"),
+         ("officer_name",           "TEXT"),
++        ("signature",              "TEXT"),
++        ("state_code",             "TEXT"),
+     ]:
+         if column not in existing:
+             cursor.execute(
+                 f"ALTER TABLE certificates ADD COLUMN {column} {ddl}"
+             )
+ 
++    # Fraud alerts raised by fraud.py at the moment of issue.
++    cursor.execute("""
++        CREATE TABLE IF NOT EXISTS fraud_alerts (
++            id               INTEGER PRIMARY KEY AUTOINCREMENT,
++            at               TEXT NOT NULL,
++            certificate_code TEXT,
++            serial_number    TEXT,
++            officer_name     TEXT,
++            reason           TEXT NOT NULL,
++            status           TEXT NOT NULL DEFAULT 'open'
++        )
++    """)
++
+     conn.commit()
+ 
+     conn.close()
+@@ -188,11 +216,10 @@ init_db()          # module level, so gunicorn app1:app works
+ 
+ 
+ def qr_data_uri(text):
+-    """Return a QR code for text as an inline data URI.
++    """QR code as an inline data: URI (i.e. no file on disk).
+ 
+-    Generated in memory rather than written to static/qr, because the
+-    deployment filesystem is not durable and an old QR image would
+-    disappear on redeploy.
++    We build it in memory on purpose. Render's disk is wiped on every
++    redeploy, so a saved PNG would 404 halfway through a demo.
+     """
+ 
+     image = qrcode.make(text)
+@@ -213,12 +240,14 @@ def qr_data_uri(text):
+ @app.route("/")
+ def home():
+ 
++    user = current_user()
++    state_code = (user or {}).get("state_code") or config.DEFAULT_STATE
++
+     return render_template(
+         "form.html",
+-        instrument_types=sorted(
+-            REVERIFICATION_MONTHS.items(),
+-            key=lambda item: (item[1], item[0])
+-        ),
++        instrument_types=config.instrument_types(state_code),
++        states=config.state_choices(),
++        selected_state=state_code,
+         today=date.today().isoformat(),
+         period_note=PERIOD_SOURCE_NOTE
+     )
+@@ -254,10 +283,10 @@ def submit():
+         "verification_date", ""
+     ).strip()
+ 
+-    # Optional. Left blank in normal use: the system calculates
+-    # the expiry date itself. Filled in only to demonstrate an
+-    # already-expired certificate.
+-    expiry_override_text = request.form.get("expiry_date", "").strip()
++    # Which State's rulebook applies. Comes from the form, falling
++    # back to the officer's own State.
++    state_code = (request.form.get("state_code", "").strip().upper()
++                  or officer.get("state_code") or config.DEFAULT_STATE)
+ 
+ 
+     # --------------------------------------------------------
+@@ -282,29 +311,28 @@ def submit():
+         audit_log("certificate rejected", target=serial_number, detail="invalid verification date")
+         return "A valid verification date is required", 400
+ 
++    # Can't verify an instrument tomorrow. Blocks back-dating tricks
++    # and plain typos.
++    if verification_date > date.today():
++        audit_log("certificate rejected", target=serial_number,
++                  detail="verification date in the future")
++        return "The verification date cannot be in the future", 400
++
+ 
+     # --------------------------------------------------------
+     # EXPIRY DATE
+     # --------------------------------------------------------
+-    # The system knows the re-verification period for the
+-    # instrument type and calculates the expiry date itself.
+-    # The trader does not type it in.
++    # The system works out the expiry itself from the instrument
++    # type + the State's config. Nobody types a date in, so a cert
++    # can never disagree with its own period.
+     # --------------------------------------------------------
+ 
+-    months = REVERIFICATION_MONTHS[instrument_type]
++    # No expiry field on the form at all. Can't be typed in, so a
++    # certificate can never contradict its own period.
++    months = config.months_for(state_code, instrument_type)
+ 
+     expiry_date = add_months(verification_date, months)
+ 
+-    if expiry_override_text:
+-
+-        override = parse_date(expiry_override_text)
+-
+-        if override is None:
+-            audit_log("certificate rejected", target=serial_number, detail="invalid expiry override")
+-            return "The expiry override is not a valid date", 400
+-
+-        expiry_date = override
+-
+ 
+     # --------------------------------------------------------
+     # INSERT INTO DATABASE
+@@ -326,9 +354,10 @@ def submit():
+             max_permissible_error,
+             reverification_months,
+             officer_id,
+-            officer_name
++            officer_name,
++            state_code
+         )
+-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
++        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     """, (
+         serial_number,
+         owner_name,
+@@ -339,10 +368,66 @@ def submit():
+         max_permissible_error,
+         months,
+         officer["id"],
+-        officer["full_name"]
++        officer["full_name"],
++        state_code
+     ))
+ 
+     certificate_id = cursor.lastrowid
++    certificate_code = f"CERT-{certificate_id:04d}"
++
++    # ---- SIGN IT --------------------------------------------------
++    # We sign the fields as they were just stored. Edit any of them
++    # later and the /verify page will say "signature invalid".
++    signature = signing.sign({
++        "code": certificate_code,
++        "serial_number": serial_number,
++        "owner_name": owner_name,
++        "instrument_type": instrument_type,
++        "verified_on": verification_date.isoformat(),
++        "expires_on": expiry_date.isoformat(),
++        "officer_id": officer["id"],
++    })
++    cursor.execute("UPDATE certificates SET signature = ? WHERE id = ?",
++                   (signature, certificate_id))
++
++    # ---- FRAUD CHECKS ---------------------------------------------
++    # Krishna's rules. We do NOT block the issue - we flag it, bc a
++    # rule firing is a suspicion, not a conviction. The officer decides.
++    existing = [
++        {"code": f"CERT-{r[0]:04d}", "serial_number": r[1], "owner_name": r[2],
++         "expires_on": r[3], "verified_on": r[4]}
++        for r in cursor.execute(
++            "SELECT id, serial_number, owner_name, expiry_date, "
++            "verification_date FROM certificates WHERE id != ?",
++            (certificate_id,)).fetchall()
++    ]
++    todays = cursor.execute(
++        "SELECT id FROM certificates WHERE officer_id = ? AND "
++        "verification_date = ?",
++        (officer["id"], verification_date.isoformat())).fetchall()
++
++    alerts = fraud.run_all_checks(
++        new_cert={
++            "code": certificate_code, "serial_number": serial_number,
++            "owner_name": owner_name, "instrument_type": instrument_type,
++            "verified_on": verification_date.isoformat(),
++            "expires_on": expiry_date.isoformat(),
++            "jurisdiction": officer.get("jurisdiction"),
++            "state_code": state_code,
++        },
++        existing_certs=existing,
++        officer={"id": officer["id"], "full_name": officer["full_name"],
++                 "jurisdiction": officer.get("jurisdiction"),
++                 "state_code": officer.get("state_code"), "kind": "lmo"},
++        certs_today=todays,
++        limit=config.daily_limit(state_code),
++    )
++    for a in alerts:
++        cursor.execute(
++            """INSERT INTO fraud_alerts (at, certificate_code, serial_number,
++                   officer_name, reason) VALUES (?, ?, ?, ?, ?)""",
++            (datetime.now().strftime("%Y-%m-%d %H:%M"), certificate_code,
++             serial_number, officer["full_name"], a))
+ 
+     conn.commit()
+ 
+@@ -359,8 +444,6 @@ def submit():
+     # CERTIFICATE CODE AND QR
+     # --------------------------------------------------------
+ 
+-    certificate_code = f"CERT-{certificate_id:04d}"
+-
+     verification_url = f"{BASE_URL}/verify/{certificate_code}"
+ 
+ 
+@@ -456,7 +539,10 @@ def verify(certificate_id):
+             instrument_class,
+             max_permissible_error,
+             reverification_months,
+-            officer_name
++            officer_name,
++            signature,
++            state_code,
++            officer_id
+ 
+         FROM certificates
+ 
+@@ -515,27 +601,49 @@ def verify(certificate_id):
+         "max_permissible_error": row[7] or "Not recorded",
+         "reverification_months": row[8],
+         "officer_name": row[9] or "Not recorded",
++        "state_code": row[11] or "",
+     }
+ 
++    # ---- IS THE SIGNATURE STILL GOOD? -----------------------------
++    # We rebuild the payload from what is stored RIGHT NOW. If anyone
++    # edited a field in the DB, this comes back False.
++    signature_ok = signing.verify({
++        "code": certificate["code"],
++        "serial_number": row[1],
++        "owner_name": row[2],
++        "instrument_type": row[3],
++        "verified_on": row[4],
++        "expires_on": row[5],
++        "officer_id": row[12],
++    }, row[10])
++
++    # ---- WHAT THE LAW SAYS, IF IT HAS EXPIRED ---------------------
++    enforcement = (config.enforcement_for("expired certificate")
++                   if status == "EXPIRED" else None)
++
+     return render_template(
+         "verify.html",
+         certificate=certificate,
+         status=status,
+         days=days,
+         checked_on=today.isoformat(),
+-        reminder_window=REMINDER_WINDOW_DAYS,
+-        period_note=PERIOD_SOURCE_NOTE
++        reminder_window=config.reminder_days(certificate.get("state_code")),
++        period_note=PERIOD_SOURCE_NOTE,
++        signature_ok=signature_ok,
++        enforcement=enforcement
+     )
+ 
+ 
+ # ============================================================
+ # REMINDERS
+ # ============================================================
+-# The officer's view of what is about to lapse. This is the
+-# list the system would send reminders from.
++# Officer's view of what's about to lapse. Login required - this
++# used to be wide open, which meant anyone could read the whole
++# due-list w/o an account.
+ # ------------------------------------------------------------
+ 
+ @app.route("/reminders")
++@role_required("lab_officer", "district_officer", "admin")
+ def reminders():
+ 
+     today = date.today()
+diff --git a/auth.py b/auth.py
+index aa40ee3..82f9164 100644
+--- a/auth.py
++++ b/auth.py
+@@ -20,6 +20,7 @@ full, ready to paste, in INTEGRATION.md next to this file.
+ """
+ 
+ import functools
++import os
+ import sqlite3
+ from datetime import date, datetime, timedelta
+ 
+@@ -96,6 +97,60 @@ def init_auth_db():
+     conn.close()
+ 
+ 
++# ============================================================
++# DEMO ACCOUNTS - THIS IS WHAT MAKES LOGIN WORK ON RENDER
++# ============================================================
++# THE PROBLEM IT FIXES:
++# Render's free tier has an EPHEMERAL filesystem. Their own docs say
++# "any changes to your web service's filesystem (uploaded images, local
++# SQLite databases, etc.) are lost every time the service redeploys,
++# restarts, or spins down." So certificates.db - incl. the users table -
++# is wiped on every deploy. seed_users.py can't help bc there's no shell
++# on the free plan. Result: 0 users -> nobody can log in.
++#
++# THE FIX: create the accounts at startup, every startup. Idempotent,
++# i.e. running it again does nothing if the user already exists.
++#
++# Passwords come from env vars if set (do that on Render), else the
++# demo defaults below. Change them by setting the env vars - no code
++# edit, no redeploy of the code itself.
++# ------------------------------------------------------------
++
++DEMO_USERS = [
++    # username,   env var for pw,   full name,                 role,               state, jurisdiction
++    ("trader1",   "PW_TRADER",      "Ramesh Trader",           "trader",           "TN", "Chennai"),
++    ("lab1",      "PW_LAB",         "Priya Lab Officer",       "lab_officer",      "TN", "Chennai"),
++    ("district1", "PW_DISTRICT",    "Suresh District Officer", "district_officer", "TN", "Chennai"),
++    ("admin1",    "PW_ADMIN",       "Admin User",              "admin",            "TN", "State HQ"),
++    ("mz1",       "PW_MZ",          "Lalrin Lab Officer",      "lab_officer",      "MZ", "Aizawl"),
++]
++
++DEFAULT_DEMO_PASSWORD = "sahidaam2026"
++
++
++def ensure_demo_users():
++    """Make sure the four demo logins exist. Runs on every boot.
++
++    Skips anyone already there, so it never overwrites a real password.
++    """
++    conn = get_db()
++    cur = conn.cursor()
++    for username, env_var, full_name, role, state_code, jurisdiction in DEMO_USERS:
++        cur.execute("SELECT id FROM users WHERE username = ?", (username,))
++        if cur.fetchone():
++            continue
++        password = os.environ.get(env_var) or DEFAULT_DEMO_PASSWORD
++        cur.execute(
++            """INSERT INTO users
++               (username, password_hash, full_name, role, state_code, jurisdiction)
++               VALUES (?, ?, ?, ?, ?, ?)""",
++            (username, generate_password_hash(password), full_name, role,
++             state_code, jurisdiction),
++        )
++    conn.commit()
++    conn.close()
++
++
+ # ============================================================
+ # AUDIT LOG
+ # ============================================================
+@@ -292,10 +347,18 @@ def dashboard():
+ 
+     conn.close()
+ 
+-    # Krishna's fraud-rules engine plugs in here once it exists.
+-    # Left empty rather than faked, so the dashboard is honest
+-    # about what it currently detects.
+-    fraud_alerts = []
++    # Krishna's rules (fraud.py) write into this table at the moment a
++    # certificate is issued. We just read them out here.
++    try:
++        conn2 = get_db()
++        fraud_alerts = conn2.execute(
++            """SELECT id, at, certificate_code, serial_number, officer_name,
++                      reason, status
++               FROM fraud_alerts ORDER BY id DESC LIMIT 50"""
++        ).fetchall()
++        conn2.close()
++    except sqlite3.Error:
++        fraud_alerts = []      # table not made yet - don't kill the page
+ 
+     return render_template(
+         "dashboard.html",
+diff --git a/config.py b/config.py
+new file mode 100644
+index 0000000..cfabb39
+--- /dev/null
++++ b/config.py
+@@ -0,0 +1,121 @@
++"""
++config.py - loads one JSON file per State, so nothing State-specific
++sits in the Python code.
++
++Owner: Anikeit (26BDE0124) + Krishna (26BDE0134)
++
++WHY: Act s.53(2)(c) and (d) put the verification/stamping fee, and the
++jurisdiction + licence period, in the hands of EACH State Government.
++So the same engine has to behave differently per State. Adding a 4th
++State = drop a new file in states/. No code change. That's our answer
++to "how do u scale to 36".
++
++Also loads enforcement.json (Shreyash's file) - the section + penalty
++we show an officer when something is wrong.
++"""
++
++import json
++import os
++
++STATES_DIR = "states"
++ENFORCEMENT_FILE = "enforcement.json"
++
++# Fallback used only if a State file is missing a value. Same numbers
++# we've always used. Held as UNVERIFIED - see note below.
++DEFAULT_MONTHS = {
++    "Weight": 24, "Capacity measure": 24, "Length measure": 24,
++    "Measuring tape": 24, "Beam scale": 24, "Counter machine": 24,
++    "Storage tank": 60, "Electronic weighing instrument": 12,
++    "Weighbridge": 12, "Fuel dispensing unit": 12,
++    "Automatic weighing instrument": 12, "Other instrument": 12,
++}
++
++PERIOD_NOTE = (
++    "Re-verification periods follow rule 27(2), Legal Metrology (General) "
++    "Rules, 2011. Held as unverified: corroborated by secondary "
++    "publications, not yet read in the gazette. Configurable per State."
++)
++
++
++def _load_states():
++    out = {}
++    if not os.path.isdir(STATES_DIR):
++        return out
++    for name in sorted(os.listdir(STATES_DIR)):
++        if not name.endswith(".json"):
++            continue
++        try:
++            with open(os.path.join(STATES_DIR, name), encoding="utf-8") as f:
++                cfg = json.load(f)
++            out[cfg["state_code"].upper()] = cfg
++        except (OSError, ValueError, KeyError):
++            # A broken config file must never take the whole app down.
++            continue
++    return out
++
++
++STATES = _load_states()
++DEFAULT_STATE = "TN" if "TN" in STATES else (next(iter(STATES), "TN"))
++
++
++def state(code):
++    """Config for a State code. Falls back to the default State."""
++    return STATES.get((code or "").upper(), STATES.get(DEFAULT_STATE, {}))
++
++
++def months_for(state_code, instrument_type):
++    """How many months this instrument is good for, in this State."""
++    cfg = state(state_code)
++    table = cfg.get("reverification_months") or DEFAULT_MONTHS
++    return table.get(instrument_type, DEFAULT_MONTHS.get(instrument_type, 12))
++
++
++def instrument_types(state_code=None):
++    """Instrument list for the dropdown, shortest period first."""
++    cfg = state(state_code)
++    table = cfg.get("reverification_months") or DEFAULT_MONTHS
++    return sorted(table.items(), key=lambda kv: (kv[1], kv[0]))
++
++
++def fee_for(state_code, instrument_type):
++    """Verification fee in rupees, or None if this State hasn't set one."""
++    return (state(state_code).get("fees_inr") or {}).get(instrument_type)
++
++
++def reminder_days(state_code):
++    return int(state(state_code).get("reminder_window_days", 60))
++
++
++def daily_limit(state_code):
++    return int(state(state_code).get("daily_issue_limit", 40))
++
++
++def state_choices():
++    """[(code, name)] for the State dropdown."""
++    return sorted((c, s.get("state_name", c)) for c, s in STATES.items())
++
++
++# ------------------------------------------------------------------
++# ENFORCEMENT - what the law says when something is wrong
++# ------------------------------------------------------------------
++
++def _load_enforcement():
++    for path in (ENFORCEMENT_FILE, os.path.join("SIH3", ENFORCEMENT_FILE)):
++        try:
++            with open(path, encoding="utf-8") as f:
++                return json.load(f)
++        except (OSError, ValueError):
++            continue
++    return []
++
++
++ENFORCEMENT = _load_enforcement()
++
++
++def enforcement_for(situation_keyword):
++    """Find the enforcement entry whose situation mentions this word."""
++    kw = situation_keyword.lower()
++    for entry in ENFORCEMENT:
++        if kw in (entry.get("situation") or "").lower():
++            return entry
++    return None
+diff --git a/SIH3/enforcement.json b/enforcement.json
+similarity index 100%
+rename from SIH3/enforcement.json
+rename to enforcement.json
+diff --git a/fraud.py b/fraud.py
+new file mode 100644
+index 0000000..885c01f
+--- /dev/null
++++ b/fraud.py
+@@ -0,0 +1,159 @@
++"""
++fraud.py - the four checks that catch a faker.
++
++Owner: Krishna (26BDE0134) - branch feat/fraud-rules
++
++Plain Python. No Flask, no DB calls. Each rule gets data in, returns
++either None (all good) or a short sentence saying what looks wrong.
++That makes them easy to test, and easy for anyone to read.
++
++Answers the mentor's q: "how to catch fakers".
++
++A cert here is just a dict w/ these keys:
++    code, serial_number, owner_name, instrument_type,
++    verified_on, expires_on, officer_id, officer_name,
++    jurisdiction, state_code
++
++An officer is a dict w/:
++    id, full_name, jurisdiction, state_code, kind ('lmo' or 'gatc'),
++    approved_state, approved_categories (list)
++"""
++
++from datetime import date, datetime
++
++
++def _as_date(text):
++    """'2026-09-09' -> date. Junk -> None. Never raises."""
++    try:
++        return datetime.strptime(str(text).strip(), "%Y-%m-%d").date()
++    except (ValueError, TypeError, AttributeError):
++        return None
++
++
++# ============================================================
++# RULE 1 - same serial, different owner
++# ============================================================
++
++def check_duplicate_serial(new_cert, existing_certs):
++    """Same instrument serial already live under a DIFFERENT owner.
++
++    Real-world case this catches: one machine's certificate being
++    copied onto another shop's machine.
++    """
++    serial = (new_cert.get("serial_number") or "").strip().upper()
++    owner = (new_cert.get("owner_name") or "").strip().lower()
++    today = date.today()
++
++    for old in existing_certs:
++        if old.get("code") == new_cert.get("code"):
++            continue                                    # itself, skip
++        if (old.get("serial_number") or "").strip().upper() != serial:
++            continue
++        if (old.get("owner_name") or "").strip().lower() == owner:
++            continue                                    # same owner, fine
++        expires = _as_date(old.get("expires_on"))
++        if expires and expires >= today:                # still live
++            return (f"Serial {serial} is already certified to a different "
++                    f"owner under {old.get('code')}.")
++    return None
++
++
++# ============================================================
++# RULE 2 - issued outside the issuer's patch
++# ============================================================
++
++def check_out_of_jurisdiction(new_cert, officer):
++    """Officer working outside their area, or a GATC outside its State.
++
++    The GATC half is not our invention. PIB release 2266230 of
++    27 May 2026 says a GATC may verify only inside the State/UT it was
++    approved for. Act s.24(3) says who notifies a GATC.
++    """
++    if officer.get("kind") == "gatc":
++        approved_state = (officer.get("approved_state") or "").upper()
++        cert_state = (new_cert.get("state_code") or "").upper()
++        if approved_state and cert_state and approved_state != cert_state:
++            return (f"Test centre {officer.get('full_name')} is approved for "
++                    f"{approved_state} only; this instrument is in {cert_state}.")
++
++        cats = [c.strip().lower() for c in officer.get("approved_categories", [])]
++        itype = (new_cert.get("instrument_type") or "").strip().lower()
++        if cats and itype and itype not in cats:
++            return (f"Test centre {officer.get('full_name')} is not approved "
++                    f"for {new_cert.get('instrument_type')}.")
++        return None
++
++    # Ordinary Legal Metrology Officer - just check the area.
++    off_area = (officer.get("jurisdiction") or "").strip().lower()
++    cert_area = (new_cert.get("jurisdiction") or "").strip().lower()
++    if off_area and cert_area and off_area != cert_area:
++        return (f"Officer {officer.get('full_name')} is assigned to "
++                f"{officer.get('jurisdiction')}; this instrument is in "
++                f"{new_cert.get('jurisdiction')}.")
++    return None
++
++
++# ============================================================
++# RULE 3 - too many in one day
++# ============================================================
++
++def check_improbable_volume(officer, certs_today, limit=40):
++    """One officer issuing more in a day than is physically possible.
++
++    limit comes from the State config file, NOT hard-coded law.
++    """
++    n = len(certs_today)
++    if n > limit:
++        return (f"Officer {officer.get('full_name')} has issued {n} "
++                f"certificates today; the configured limit is {limit}.")
++    return None
++
++
++# ============================================================
++# RULE 4 - lapsed, then quietly re-registered
++# ============================================================
++
++def check_lapsed_reregistration(new_cert, existing_certs):
++    """Expired instrument re-registered to a new owner, never re-verified.
++
++    i.e. somebody tries to wash an expired machine clean by moving it
++    to a new name instead of getting it re-verified.
++    """
++    serial = (new_cert.get("serial_number") or "").strip().upper()
++    owner = (new_cert.get("owner_name") or "").strip().lower()
++    new_verified = _as_date(new_cert.get("verified_on"))
++    today = date.today()
++
++    for old in existing_certs:
++        if old.get("code") == new_cert.get("code"):
++            continue
++        if (old.get("serial_number") or "").strip().upper() != serial:
++            continue
++        if (old.get("owner_name") or "").strip().lower() == owner:
++            continue
++        expires = _as_date(old.get("expires_on"))
++        if not expires or expires >= today:
++            continue                                    # not expired, skip
++        # It IS expired and the owner changed. Only OK if the new cert
++        # was actually verified after the old one lapsed.
++        if new_verified is None or new_verified <= expires:
++            return (f"Serial {serial} expired on {expires.isoformat()} and has "
++                    f"been re-registered without re-verification.")
++    return None
++
++
++# ============================================================
++# RUN THEM ALL
++# ============================================================
++
++def run_all_checks(new_cert, existing_certs, officer, certs_today=None,
++                   limit=40):
++    """Run every rule. Returns a list of problems, [] if clean."""
++    certs_today = certs_today or []
++    found = [
++        check_duplicate_serial(new_cert, existing_certs),
++        check_out_of_jurisdiction(new_cert, officer),
++        check_improbable_volume(officer, certs_today, limit),
++        check_lapsed_reregistration(new_cert, existing_certs),
++    ]
++    return [f for f in found if f]
+diff --git a/requirements.txt b/requirements.txt
+index 0cbbd16..b68b096 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -2,3 +2,4 @@ Flask
+ qrcode
+ Pillow
+ gunicorn
++cryptography
+diff --git a/signing.py b/signing.py
+new file mode 100644
+index 0000000..c151110
+--- /dev/null
++++ b/signing.py
+@@ -0,0 +1,124 @@
++"""
++signing.py - digital signature for certificates. (Ed25519)
++
++Owner: Anikeit (26BDE0124) - branch feat/signing-and-config
++
++WHY THIS EXISTS
++A fake paper certificate is easy to print. A fake *signature* is not.
++We sign the cert's fields w/ a secret key only our server has. Anyone
++can check the signature w/ the public key, but nobody can make a valid
++one w/o the secret key. So: print a fake cert -> signature fails -> caught.
++
++Answers the mentor's q: "how to handle fake verification".
++
++KEY HANDLING - important
++  - Local dev: key is auto-made and saved to signing_key.pem (gitignored).
++  - On Render: set env var SIGNING_KEY to the base64 private key.
++    Get that string by running:  python signing.py --print-key
++  - If SIGNING_KEY is missing the app still runs; it just makes a
++    throwaway key each boot, so old sigs won't verify. That's on purpose
++    i.e. the app never crashes just bc a key is missing.
++"""
++
++import base64
++import os
++
++from cryptography.hazmat.primitives import serialization
++from cryptography.hazmat.primitives.asymmetric.ed25519 import (
++    Ed25519PrivateKey, Ed25519PublicKey,
++)
++from cryptography.exceptions import InvalidSignature
++
++KEY_FILE = "signing_key.pem"
++
++# Fields we sign, in THIS order. Never reorder - if u do, every old
++# signature stops verifying.
++FIELD_ORDER = (
++    "code", "serial_number", "owner_name", "instrument_type",
++    "verified_on", "expires_on", "officer_id",
++)
++
++
++def _load_or_make_key():
++    """Get the private key. Order: env var -> file -> make a new one."""
++
++    env_key = os.environ.get("SIGNING_KEY", "").strip()
++    if env_key:
++        raw = base64.b64decode(env_key)
++        return Ed25519PrivateKey.from_private_bytes(raw)
++
++    if os.path.exists(KEY_FILE):
++        with open(KEY_FILE, "rb") as f:
++            return serialization.load_pem_private_key(f.read(), password=None)
++
++    key = Ed25519PrivateKey.generate()
++    try:
++        with open(KEY_FILE, "wb") as f:
++            f.write(key.private_bytes(
++                encoding=serialization.Encoding.PEM,
++                format=serialization.PrivateFormat.PKCS8,
++                encryption_algorithm=serialization.NoEncryption(),
++            ))
++    except OSError:
++        # Read-only disk (some hosts). Fine - key just lives in memory.
++        pass
++    return key
++
++
++_PRIVATE = _load_or_make_key()
++_PUBLIC = _PRIVATE.public_key()
++
++
++def build_payload(cert):
++    """Turn a cert dict into the exact string we sign.
++
++    We join every field w/ '|'. Change ONE character anywhere and the
++    signature check fails. That's the whole point.
++    """
++    return "|".join(str(cert.get(f, "")) for f in FIELD_ORDER)
++
++
++def sign(cert):
++    """Sign a cert dict. Returns a base64 string to store in the DB."""
++    sig = _PRIVATE.sign(build_payload(cert).encode("utf-8"))
++    return base64.b64encode(sig).decode("ascii")
++
++
++def verify(cert, signature_b64):
++    """True if the signature matches the cert as it is stored right now.
++
++    False if: no signature, junk signature, or ANY field was edited
++    after issue.
++    """
++    if not signature_b64:
++        return False
++    try:
++        _PUBLIC.verify(
++            base64.b64decode(signature_b64),
++            build_payload(cert).encode("utf-8"),
++        )
++        return True
++    except (InvalidSignature, ValueError, TypeError):
++        return False
++
++
++def public_key_b64():
++    """Public key as base64. Safe to publish - it only *checks* sigs."""
++    return base64.b64encode(_PUBLIC.public_bytes(
++        encoding=serialization.Encoding.Raw,
++        format=serialization.PublicFormat.Raw,
++    )).decode("ascii")
++
++
++if __name__ == "__main__":
++    import sys
++    if "--print-key" in sys.argv:
++        raw = _PRIVATE.private_bytes(
++            encoding=serialization.Encoding.Raw,
++            format=serialization.PrivateFormat.Raw,
++            encryption_algorithm=serialization.NoEncryption(),
++        )
++        print("Set this as SIGNING_KEY on Render:")
++        print(base64.b64encode(raw).decode("ascii"))
++    else:
++        print("public key:", public_key_b64())
+diff --git a/states/DL.json b/states/DL.json
+new file mode 100644
+index 0000000..4a751a3
+--- /dev/null
++++ b/states/DL.json
+@@ -0,0 +1,20 @@
++{
++  "state_code": "DL",
++  "state_name": "Delhi",
++  "reminder_window_days": 45,
++  "daily_issue_limit": 35,
++  "jurisdictions": ["North Delhi", "South Delhi", "East Delhi", "West Delhi"],
++  "reverification_months": {
++    "Weight": 24, "Capacity measure": 24, "Length measure": 24,
++    "Measuring tape": 24, "Beam scale": 24, "Counter machine": 24,
++    "Storage tank": 60, "Electronic weighing instrument": 12,
++    "Weighbridge": 12, "Fuel dispensing unit": 12,
++    "Automatic weighing instrument": 12, "Other instrument": 12
++  },
++  "fees_inr": {
++    "Weight": 50, "Weighbridge": 2000, "Fuel dispensing unit": 600,
++    "Electronic weighing instrument": 200, "Storage tank": 2500,
++    "Other instrument": 120
++  },
++  "fee_source": "PLACEHOLDER - not yet verified against the Delhi published fee schedule. Revenue context (verified): Delhi collected Rs 10.39 crore under Major Head 1475 / Minor Head 106 in 2023-24 - GNCTD Receipts Budget 2025-26, page 17."
++}
+diff --git a/states/MZ.json b/states/MZ.json
+new file mode 100644
+index 0000000..6e4fee5
+--- /dev/null
++++ b/states/MZ.json
+@@ -0,0 +1,20 @@
++{
++  "state_code": "MZ",
++  "state_name": "Mizoram",
++  "reminder_window_days": 90,
++  "daily_issue_limit": 15,
++  "jurisdictions": ["Aizawl", "Lunglei", "Champhai"],
++  "reverification_months": {
++    "Weight": 24, "Capacity measure": 24, "Length measure": 24,
++    "Measuring tape": 24, "Beam scale": 24, "Counter machine": 24,
++    "Storage tank": 60, "Electronic weighing instrument": 12,
++    "Weighbridge": 12, "Fuel dispensing unit": 12,
++    "Automatic weighing instrument": 12, "Other instrument": 12
++  },
++  "fees_inr": {
++    "Weight": 25, "Weighbridge": 900, "Fuel dispensing unit": 300,
++    "Electronic weighing instrument": 90, "Storage tank": 1200,
++    "Other instrument": 60
++  },
++  "fee_source": "PLACEHOLDER - not yet verified against the Mizoram published fee schedule. Revenue context (verified): Mizoram collected Rs 17.61 lakh under Major Head 1475 / Minor Head 106 in 2023-24 - CAG Finance Accounts 2023-24 Vol II, page 108."
++}
+diff --git a/states/TN.json b/states/TN.json
+new file mode 100644
+index 0000000..47fcb33
+--- /dev/null
++++ b/states/TN.json
+@@ -0,0 +1,20 @@
++{
++  "state_code": "TN",
++  "state_name": "Tamil Nadu",
++  "reminder_window_days": 60,
++  "daily_issue_limit": 40,
++  "jurisdictions": ["Chennai", "Coimbatore", "Madurai", "Salem"],
++  "reverification_months": {
++    "Weight": 24, "Capacity measure": 24, "Length measure": 24,
++    "Measuring tape": 24, "Beam scale": 24, "Counter machine": 24,
++    "Storage tank": 60, "Electronic weighing instrument": 12,
++    "Weighbridge": 12, "Fuel dispensing unit": 12,
++    "Automatic weighing instrument": 12, "Other instrument": 12
++  },
++  "fees_inr": {
++    "Weight": 40, "Weighbridge": 1500, "Fuel dispensing unit": 500,
++    "Electronic weighing instrument": 150, "Storage tank": 2000,
++    "Other instrument": 100
++  },
++  "fee_source": "PLACEHOLDER - not yet verified against a published Tamil Nadu fee schedule. Krishna to replace or mark unverified aloud."
++}
+diff --git a/templates/form.html b/templates/form.html
+index dddc0f1..7d56476 100644
+--- a/templates/form.html
++++ b/templates/form.html
+@@ -107,6 +107,19 @@
+             <label for="owner_name">Owner name</label>
+             <input type="text" id="owner_name" name="owner_name" required>
+ 
++            <label for="state_code">State or Union Territory</label>
++            <select id="state_code" name="state_code" required>
++                {% for code, name in states %}
++                    <option value="{{ code }}"
++                      {% if code == selected_state %}selected{% endif %}>
++                      {{ name }} ({{ code }})</option>
++                {% endfor %}
++            </select>
++            <div class="hint">
++                Each State sets its own fee, re-verification period and
++                reminder window. Act s.53(2)(c) and (d).
++            </div>
++
+             <label for="instrument_type">Instrument type</label>
+             <select id="instrument_type" name="instrument_type" required>
+                 <option value="">Select an instrument type</option>
+@@ -131,13 +144,6 @@
+             <input type="date" id="verification_date" name="verification_date"
+                    value="{{ today }}" required>
+ 
+-            <label for="expiry_date">Expiry date override (demonstration only)</label>
+-            <input type="date" id="expiry_date" name="expiry_date">
+-            <div class="hint">
+-                Leave this blank in normal use. Fill it with a past date only to show
+-                what an expired certificate looks like when scanned.
+-            </div>
+-
+             <button type="submit">Submit application</button>
+ 
+         </form>
+diff --git a/templates/verify.html b/templates/verify.html
+index 8ca450d..2b27c1e 100644
+--- a/templates/verify.html
++++ b/templates/verify.html
+@@ -84,6 +84,19 @@
+             line-height: 1.5;
+         }
+ 
++
++        .enforcement {
++            margin-top: 22px;
++            border: 2px solid #a11414;
++            background: #fdeaea;
++            padding: 16px 18px;
++        }
++        .enf-title {
++            font-weight: bold; color: #a11414; font-size: 16px;
++            margin-bottom: 8px; text-transform: uppercase; letter-spacing: .5px;
++        }
++        .enf-row { font-size: 15px; line-height: 1.5; margin-bottom: 6px; }
++        .enf-src { font-size: 12px; color: #666; margin-top: 8px; font-style: italic; }
+     </style>
+ 
+ </head>
+@@ -176,6 +189,34 @@
+                 {% endif %}
+             </div>
+ 
++            <div class="row">
++                <span class="label">Digital signature</span>
++                {% if signature_ok %}
++                    <b style="color:#12621f">VERIFIED</b>
++                    &mdash; signed by the issuing system; no field has been altered
++                {% else %}
++                    <b style="color:#a11414">NOT VERIFIED</b>
++                    &mdash; this certificate was not signed, or a field has been altered since issue
++                {% endif %}
++            </div>
++
++            {% if enforcement %}
++            <div class="enforcement">
++                <div class="enf-title">What the law says about this</div>
++                <div class="enf-row"><b>Section {{ enforcement.section }}</b>,
++                    Legal Metrology Act, 2009</div>
++                <div class="enf-row">{{ enforcement.penalty }}</div>
++                <div class="enf-row">
++                    <b>{% if enforcement.compoundable %}Compoundable{% else %}
++                    Not compoundable{% endif %}.</b>
++                    {{ enforcement.compounding_basis }}
++                </div>
++                <div class="enf-row"><b>Officer's next step:</b>
++                    {{ enforcement.officer_next_step }}</div>
++                <div class="enf-src">{{ enforcement.source }}</div>
++            </div>
++            {% endif %}
++
+             <div class="note">
+                 {{ period_note }}
+             </div>
+diff --git a/test_app.py b/test_app.py
+new file mode 100644
+index 0000000..9de1f61
+--- /dev/null
++++ b/test_app.py
+@@ -0,0 +1,245 @@
++"""
++test_app.py - end-to-end checks on the whole app.
++
++Run:  python -m pytest -q
++
++These are Vaibhavi's acceptance checks, written as code so they can be
++re-run in 2 seconds after every change instead of clicked by hand.
++Each test name says what it proves.
++"""
++
++import datetime
++import os
++import re
++import sqlite3
++
++import pytest
++
++DB = "certificates.db"
++TODAY = datetime.date.today()
++PW = "sahidaam2026"
++
++
++@pytest.fixture()
++def app_client():
++    """Fresh DB + a test client, for every single test."""
++    if os.path.exists(DB):
++        os.remove(DB)
++    import importlib
++    import app1
++    importlib.reload(app1)
++    app1.app.config["TESTING"] = True
++    yield app1.app.test_client()
++    if os.path.exists(DB):
++        os.remove(DB)
++
++
++def login(c, user="lab1"):
++    return c.post("/login", data={"username": user, "password": PW})
++
++
++def issue(c, serial="WB-4471", itype="Weighbridge", days_ago=0,
++          state="TN", owner="Sharma Traders"):
++    return c.post("/submit", data={
++        "serial_number": serial, "owner_name": owner, "instrument_type": itype,
++        "instrument_class": "Class III", "max_permissible_error": "20 kg",
++        "verification_date": (TODAY - datetime.timedelta(days=days_ago)).isoformat(),
++        "state_code": state,
++    })
++
++
++def status_of(c, code):
++    body = c.get(f"/verify/{code}").data.decode()
++    m = re.search(r'class="status \w+">(.*?)</div>', body, re.S)
++    return (m.group(1).strip() if m else "NONE"), body
++
++
++# ---------------------------------------------------------------- accounts
++def test_demo_users_exist_after_a_fresh_start(app_client):
++    """The Render blocker. A wiped DB must still have working logins."""
++    n = sqlite3.connect(DB).execute("SELECT COUNT(*) FROM users").fetchone()[0]
++    assert n >= 4
++
++
++def test_passwords_are_never_stored_in_plain_text(app_client):
++    rows = sqlite3.connect(DB).execute(
++        "SELECT password_hash FROM users").fetchall()
++    for (h,) in rows:
++        assert PW not in h
++        assert h.startswith(("pbkdf2:", "scrypt:", "argon2"))
++
++
++def test_good_password_logs_in(app_client):
++    assert login(app_client).status_code == 302
++
++
++def test_wrong_password_is_refused(app_client):
++    r = app_client.post("/login", data={"username": "lab1", "password": "nope"})
++    assert r.status_code == 401
++
++
++def test_unknown_user_gets_the_same_message_as_wrong_password(app_client):
++    r = app_client.post("/login",
++                        data={"username": "ghost", "password": "nope"})
++    assert r.status_code == 401
++    assert b"Incorrect username or password" in r.data
++
++
++# ---------------------------------------------------------------- roles
++def test_logged_out_visitor_cannot_reach_the_dashboard(app_client):
++    assert app_client.get("/dashboard").status_code == 302
++
++
++def test_trader_cannot_reach_the_dashboard(app_client):
++    login(app_client, "trader1")
++    assert app_client.get("/dashboard").status_code == 403
++
++
++def test_trader_cannot_reach_the_reminders_page(app_client):
++    """This one was a real hole - /reminders had no guard at all."""
++    login(app_client, "trader1")
++    assert app_client.get("/reminders").status_code == 403
++
++
++def test_trader_cannot_issue_a_certificate(app_client):
++    login(app_client, "trader1")
++    assert issue(app_client).status_code == 403
++
++
++def test_lab_officer_cannot_read_the_audit_log(app_client):
++    login(app_client)
++    assert app_client.get("/admin/audit").status_code == 403
++
++
++def test_admin_can_read_the_audit_log(app_client):
++    login(app_client, "admin1")
++    assert app_client.get("/admin/audit").status_code == 200
++
++
++# ---------------------------------------------------------------- expiry
++def test_new_certificate_is_valid(app_client):
++    login(app_client); issue(app_client)
++    assert status_of(app_client, "CERT-0001")[0] == "VALID"
++
++
++def test_old_certificate_is_expired(app_client):
++    login(app_client)
++    issue(app_client, serial="FDU-1", itype="Fuel dispensing unit", days_ago=400)
++    assert status_of(app_client, "CERT-0001")[0] == "EXPIRED"
++
++
++def test_certificate_near_the_end_says_expiring_soon(app_client):
++    login(app_client)
++    issue(app_client, serial="FDU-2", itype="Fuel dispensing unit", days_ago=335)
++    assert status_of(app_client, "CERT-0001")[0] == "EXPIRING SOON"
++
++
++def test_unknown_certificate_says_not_found(app_client):
++    assert status_of(app_client, "CERT-9999")[0] == "NOT FOUND"
++
++
++def test_nonsense_certificate_id_says_not_found(app_client):
++    assert status_of(app_client, "banana")[0] == "NOT FOUND"
++
++
++def test_future_verification_date_is_refused(app_client):
++    login(app_client)
++    r = app_client.post("/submit", data={
++        "serial_number": "X", "owner_name": "Y", "instrument_type": "Weight",
++        "verification_date": (TODAY + datetime.timedelta(days=5)).isoformat()})
++    assert r.status_code == 400
++
++
++def test_there_is_no_expiry_field_on_the_form(app_client):
++    """A typed expiry can contradict the period. The field must not exist."""
++    assert b'name="expiry_date"' not in app_client.get("/").data
++
++
++# ---------------------------------------------------------------- signature
++def test_a_fresh_certificate_has_a_valid_signature(app_client):
++    login(app_client); issue(app_client)
++    assert ">VERIFIED<" in status_of(app_client, "CERT-0001")[1]
++
++
++def test_editing_the_database_breaks_the_signature(app_client):
++    """The whole anti-forgery claim rests on this one test."""
++    login(app_client); issue(app_client)
++    conn = sqlite3.connect(DB)
++    conn.execute("UPDATE certificates SET owner_name = 'Someone Else' WHERE id = 1")
++    conn.commit(); conn.close()
++    assert ">NOT VERIFIED<" in status_of(app_client, "CERT-0001")[1]
++
++
++# ---------------------------------------------------------------- enforcement
++def test_expired_certificate_shows_the_section_and_penalty(app_client):
++    login(app_client)
++    issue(app_client, serial="FDU-1", itype="Fuel dispensing unit", days_ago=400)
++    body = status_of(app_client, "CERT-0001")[1]
++    assert "Section 33" in body and "2,000" in body
++
++
++def test_valid_certificate_shows_no_enforcement_panel(app_client):
++    login(app_client); issue(app_client)
++    assert "Section 33" not in status_of(app_client, "CERT-0001")[1]
++
++
++# ---------------------------------------------------------------- fraud
++def test_same_serial_different_owner_raises_an_alert(app_client):
++    login(app_client)
++    issue(app_client, serial="WB-1", owner="Sharma Traders")
++    issue(app_client, serial="WB-1", owner="Bharat Fuels")
++    n = sqlite3.connect(DB).execute(
++        "SELECT COUNT(*) FROM fraud_alerts").fetchone()[0]
++    assert n >= 1
++
++
++def test_same_serial_same_owner_raises_nothing(app_client):
++    login(app_client)
++    issue(app_client, serial="WB-1", owner="Sharma Traders")
++    issue(app_client, serial="WB-1", owner="Sharma Traders")
++    n = sqlite3.connect(DB).execute(
++        "SELECT COUNT(*) FROM fraud_alerts").fetchone()[0]
++    assert n == 0
++
++
++# ---------------------------------------------------------------- states
++def test_two_states_use_different_reminder_windows(app_client):
++    import config
++    assert config.reminder_days("MZ") != config.reminder_days("TN")
++
++
++def test_two_states_can_charge_different_fees(app_client):
++    import config
++    assert config.fee_for("DL", "Weighbridge") != config.fee_for("MZ", "Weighbridge")
++
++
++def test_every_state_file_loads(app_client):
++    import config
++    assert len(config.STATES) >= 3
++
++
++# ---------------------------------------------------------------- public
++def test_anyone_can_open_the_report_form(app_client):
++    assert app_client.get("/report").status_code == 200
++
++
++def test_a_public_report_is_saved(app_client):
++    app_client.post("/report", data={"serial_number": "WB-9",
++                                     "description": "Looks tampered with"})
++    n = sqlite3.connect(DB).execute("SELECT COUNT(*) FROM reports").fetchone()[0]
++    assert n == 1
++
++
++def test_an_empty_report_is_refused(app_client):
++    app_client.post("/report", data={"serial_number": "", "description": ""})
++    n = sqlite3.connect(DB).execute("SELECT COUNT(*) FROM reports").fetchone()[0]
++    assert n == 0
++
++
++# ---------------------------------------------------------------- audit
++def test_actions_are_written_to_the_audit_log(app_client):
++    login(app_client); issue(app_client)
++    rows = sqlite3.connect(DB).execute(
++        "SELECT action FROM audit").fetchall()
++    actions = {r[0] for r in rows}
++    assert "login" in actions
+diff --git a/test_fraud.py b/test_fraud.py
+new file mode 100644
+index 0000000..bf90302
+--- /dev/null
++++ b/test_fraud.py
+@@ -0,0 +1,110 @@
++"""
++test_fraud.py - two tests per rule: one where it should stay quiet,
++one where it should fire.
++
++Run:  python -m pytest -q
++
++Why both halves matter: a rule that fires on an innocent case is worse
++than no rule at all, bc it accuses the wrong person.
++"""
++
++from datetime import date, timedelta
++
++import fraud
++
++TODAY = date.today()
++
++
++def d(days):
++    """Shorthand: d(-30) = 30 days ago, as a 'YYYY-MM-DD' string."""
++    return (TODAY + timedelta(days=days)).isoformat()
++
++
++def cert(**kw):
++    base = {
++        "code": "CERT-0002", "serial_number": "WB-4471",
++        "owner_name": "Sharma Traders", "instrument_type": "Weighbridge",
++        "verified_on": d(0), "expires_on": d(365),
++        "officer_id": 2, "officer_name": "Priya Lab Officer",
++        "jurisdiction": "Chennai", "state_code": "TN",
++    }
++    base.update(kw)
++    return base
++
++
++LMO = {"id": 2, "full_name": "Priya Lab Officer", "jurisdiction": "Chennai",
++       "state_code": "TN", "kind": "lmo"}
++
++GATC = {"id": 9, "full_name": "VIT Test Centre", "kind": "gatc",
++        "approved_state": "TN", "approved_categories": ["weighbridge", "weight"]}
++
++
++# ---------------------------------------------------------------- rule 1
++def test_duplicate_serial_quiet_when_same_owner():
++    old = cert(code="CERT-0001")
++    assert fraud.check_duplicate_serial(cert(), [old]) is None
++
++
++def test_duplicate_serial_fires_on_different_owner():
++    old = cert(code="CERT-0001", owner_name="Bharat Fuels")
++    msg = fraud.check_duplicate_serial(cert(), [old])
++    assert msg is not None and "CERT-0001" in msg
++
++
++# ---------------------------------------------------------------- rule 2
++def test_jurisdiction_quiet_when_officer_in_own_area():
++    assert fraud.check_out_of_jurisdiction(cert(), LMO) is None
++
++
++def test_jurisdiction_fires_when_officer_out_of_area():
++    msg = fraud.check_out_of_jurisdiction(cert(jurisdiction="Siliguri"), LMO)
++    assert msg is not None and "Siliguri" in msg
++
++
++def test_gatc_fires_outside_approved_state():
++    msg = fraud.check_out_of_jurisdiction(cert(state_code="WB"), GATC)
++    assert msg is not None and "TN" in msg
++
++
++def test_gatc_fires_on_unapproved_category():
++    msg = fraud.check_out_of_jurisdiction(
++        cert(instrument_type="Storage tank"), GATC)
++    assert msg is not None and "Storage tank" in msg
++
++
++# ---------------------------------------------------------------- rule 3
++def test_volume_quiet_under_limit():
++    assert fraud.check_improbable_volume(LMO, [cert()] * 10, limit=40) is None
++
++
++def test_volume_fires_over_limit():
++    msg = fraud.check_improbable_volume(LMO, [cert()] * 61, limit=40)
++    assert msg is not None and "61" in msg
++
++
++# ---------------------------------------------------------------- rule 4
++def test_lapsed_quiet_when_reverified_after_expiry():
++    old = cert(code="CERT-0001", owner_name="Bharat Fuels",
++               expires_on=d(-30), verified_on=d(-395))
++    new = cert(verified_on=d(-1))          # verified AFTER the old lapsed
++    assert fraud.check_lapsed_reregistration(new, [old]) is None
++
++
++def test_lapsed_fires_when_never_reverified():
++    old = cert(code="CERT-0001", owner_name="Bharat Fuels",
++               expires_on=d(-30), verified_on=d(-395))
++    new = cert(verified_on=d(-60))         # verified BEFORE the old lapsed
++    msg = fraud.check_lapsed_reregistration(new, [old])
++    assert msg is not None and "without re-verification" in msg
++
++
++# ---------------------------------------------------------------- all
++def test_run_all_clean_case_returns_nothing():
++    assert fraud.run_all_checks(cert(), [], LMO, [], 40) == []
++
++
++def test_run_all_collects_more_than_one_problem():
++    old = cert(code="CERT-0001", owner_name="Bharat Fuels")
++    problems = fraud.run_all_checks(
++        cert(jurisdiction="Siliguri"), [old], LMO, [cert()] * 61, 40)
++    assert len(problems) >= 3
+-- 
+2.43.0
+

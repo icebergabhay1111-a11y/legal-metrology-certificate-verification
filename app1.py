@@ -1,3 +1,32 @@
+"""
+app1.py - the whole web app.
+
+Team SahiDaam | SIH26036 | Online Verification System for Weighing and
+Measuring Instruments.
+
+WHAT EACH FILE DOES
+    app1.py    this file - routes, DB tables, issuing a certificate
+    auth.py    login, the 4 roles, audit log, dashboard, public reports
+    config.py  reads states/*.json + enforcement.json
+    signing.py Ed25519 signature so a fake cert can be spotted
+    fraud.py   the 4 "catch a faker" rules (pure functions, no DB)
+    states/    one JSON file per State. Add a file = add a State.
+
+RUN IT LOCALLY
+    pip install -r requirements.txt
+    python app1.py           -> http://127.0.0.1:5050
+    Login: lab1 / sahidaam2026   (see auth.py DEMO_USERS)
+
+RUN THE TESTS
+    python -m pytest -q      -> should say 43 passed
+
+DEPLOY
+    Start command: gunicorn app1:app
+    Env vars to set: BASE_URL, SECRET_KEY, SIGNING_KEY
+    See DEPLOY.md for the hosting comparison + why the DB keeps
+    getting wiped on Render free.
+"""
+
 from flask import Flask, render_template, request
 from datetime import date, datetime, timedelta
 import sqlite3
@@ -16,8 +45,13 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 
 import auth
+import config          # per-State settings + Shreyash's enforcement.json
+import signing         # Ed25519 signature on every certificate
+import fraud           # Krishna's four "catch a faker" rules
+
 app.register_blueprint(auth.auth_bp)
 auth.init_auth_db()
+auth.ensure_demo_users()   # makes login work after every deploy - see auth.py
 from auth import role_required, current_user, log as audit_log
 
 # ============================================================
@@ -26,19 +60,17 @@ from auth import role_required, current_user, log as audit_log
 
 DATABASE = "certificates.db"
 
-# Render provides PORT automatically.
-# Locally it will use 5050.
+# Render sets PORT for us. Locally we use 5050.
 PORT = int(os.environ.get("PORT", 5050))
 
 # ------------------------------------------------------------
 # PUBLIC URL
 # ------------------------------------------------------------
-# When deployed on Render, set this environment variable:
-#
-# BASE_URL=https://your-app-name.onrender.com
-#
-# If BASE_URL is not set, the app automatically uses the
-# laptop's local IP for local-network testing.
+# On Render set this env var:
+#     BASE_URL=https://your-app-name.onrender.com
+# If it's not set we fall back to the laptop's local IP, which is fine
+# for testing on the same wifi but useless for a QR a judge scans.
+# i.e. ALWAYS set BASE_URL before a demo.
 # ------------------------------------------------------------
 
 def get_local_ip():
@@ -61,50 +93,32 @@ BASE_URL = os.environ.get(
 
 
 # ============================================================
-# RE-VERIFICATION PERIODS
+# RE-VERIFICATION PERIODS + PER-STATE SETTINGS
 # ============================================================
-# Source: rule 27(2), Legal Metrology (General) Rules, 2011.
+# These used to be hard-coded here. They now live in states/*.json
+# and are read by config.py, bc Act s.53(2)(c) and (d) put the fee,
+# the jurisdiction and the licence period in EACH State's hands.
+# Adding a 4th State = drop a new file in states/. No code change.
 #
-# IMPORTANT, AND SAY THIS ALOUD IF ASKED:
-# These periods are corroborated by two law-firm publications.
-# The gazette text of rule 27 has not been read by this team.
-# They are therefore held as unverified and are configurable,
-# not hard-coded law.
-#
-# The number of days before expiry at which a holder is
-# reminded is also a configuration value, per State.
+# SAY THIS ALOUD IF ASKED: the 24 / 60 / 12 month periods come from
+# rule 27(2) via two law-firm publications. We have NOT read the
+# gazette. So they are config, not hard-coded law.
 # ------------------------------------------------------------
 
-REVERIFICATION_MONTHS = {
-    "Weight":                          24,
-    "Capacity measure":                24,
-    "Length measure":                  24,
-    "Measuring tape":                  24,
-    "Beam scale":                      24,
-    "Counter machine":                 24,
-    "Storage tank":                    60,
-    "Electronic weighing instrument":  12,
-    "Weighbridge":                     12,
-    "Fuel dispensing unit":            12,
-    "Automatic weighing instrument":   12,
-    "Other instrument":                12,
-}
+PERIOD_SOURCE_NOTE = config.PERIOD_NOTE
 
-# Days before expiry at which the holder is reminded.
-REMINDER_WINDOW_DAYS = int(
-    os.environ.get("REMINDER_WINDOW_DAYS", 60)
-)
+# Kept only so old code + tests that still import it keep working.
+REVERIFICATION_MONTHS = config.DEFAULT_MONTHS
 
-PERIOD_SOURCE_NOTE = (
-    "Re-verification periods follow rule 27(2), Legal Metrology "
-    "(General) Rules, 2011. Held as unverified: corroborated by "
-    "secondary publications, not yet read in the gazette. "
-    "Configurable per State."
-)
+# Default reminder window if a State file doesn't set one.
+REMINDER_WINDOW_DAYS = int(os.environ.get("REMINDER_WINDOW_DAYS", 60))
 
 
 def add_months(start, months):
-    """Return start shifted forward by whole months, clamping the day."""
+    """Move a date forward N whole months.
+
+    Clamps the day so 31 Jan + 1 month = 29 Feb, not a crash.
+    """
 
     year = start.year + (start.month - 1 + months) // 12
     month = (start.month - 1 + months) % 12 + 1
@@ -119,7 +133,7 @@ def add_months(start, months):
 
 
 def parse_date(text):
-    """Return a date from YYYY-MM-DD, or None."""
+    """'2026-09-09' -> date. Junk -> None. Never raises."""
 
     try:
         return datetime.strptime(text.strip(), "%Y-%m-%d").date()
@@ -158,9 +172,8 @@ def init_db():
     # --------------------------------------------------------
     # MIGRATION
     # --------------------------------------------------------
-    # Older databases were created before class of instrument,
-    # maximum permissible error and the re-verification period
-    # were recorded. Add the columns if they are missing.
+    # Old DBs were made before some of these columns existed.
+    # Add whatever is missing. Safe to run every boot.
     # --------------------------------------------------------
 
     cursor.execute("PRAGMA table_info(certificates)")
@@ -173,11 +186,26 @@ def init_db():
         ("reverification_months",  "INTEGER"),
         ("officer_id",             "INTEGER"),
         ("officer_name",           "TEXT"),
+        ("signature",              "TEXT"),
+        ("state_code",             "TEXT"),
     ]:
         if column not in existing:
             cursor.execute(
                 f"ALTER TABLE certificates ADD COLUMN {column} {ddl}"
             )
+
+    # Fraud alerts raised by fraud.py at the moment of issue.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS fraud_alerts (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            at               TEXT NOT NULL,
+            certificate_code TEXT,
+            serial_number    TEXT,
+            officer_name     TEXT,
+            reason           TEXT NOT NULL,
+            status           TEXT NOT NULL DEFAULT 'open'
+        )
+    """)
 
     conn.commit()
 
@@ -188,11 +216,10 @@ init_db()          # module level, so gunicorn app1:app works
 
 
 def qr_data_uri(text):
-    """Return a QR code for text as an inline data URI.
+    """QR code as an inline data: URI (i.e. no file on disk).
 
-    Generated in memory rather than written to static/qr, because the
-    deployment filesystem is not durable and an old QR image would
-    disappear on redeploy.
+    We build it in memory on purpose. Render's disk is wiped on every
+    redeploy, so a saved PNG would 404 halfway through a demo.
     """
 
     image = qrcode.make(text)
@@ -213,12 +240,14 @@ def qr_data_uri(text):
 @app.route("/")
 def home():
 
+    user = current_user()
+    state_code = (user or {}).get("state_code") or config.DEFAULT_STATE
+
     return render_template(
         "form.html",
-        instrument_types=sorted(
-            REVERIFICATION_MONTHS.items(),
-            key=lambda item: (item[1], item[0])
-        ),
+        instrument_types=config.instrument_types(state_code),
+        states=config.state_choices(),
+        selected_state=state_code,
         today=date.today().isoformat(),
         period_note=PERIOD_SOURCE_NOTE
     )
@@ -254,10 +283,10 @@ def submit():
         "verification_date", ""
     ).strip()
 
-    # Optional. Left blank in normal use: the system calculates
-    # the expiry date itself. Filled in only to demonstrate an
-    # already-expired certificate.
-    expiry_override_text = request.form.get("expiry_date", "").strip()
+    # Which State's rulebook applies. Comes from the form, falling
+    # back to the officer's own State.
+    state_code = (request.form.get("state_code", "").strip().upper()
+                  or officer.get("state_code") or config.DEFAULT_STATE)
 
 
     # --------------------------------------------------------
@@ -282,28 +311,27 @@ def submit():
         audit_log("certificate rejected", target=serial_number, detail="invalid verification date")
         return "A valid verification date is required", 400
 
+    # Can't verify an instrument tomorrow. Blocks back-dating tricks
+    # and plain typos.
+    if verification_date > date.today():
+        audit_log("certificate rejected", target=serial_number,
+                  detail="verification date in the future")
+        return "The verification date cannot be in the future", 400
+
 
     # --------------------------------------------------------
     # EXPIRY DATE
     # --------------------------------------------------------
-    # The system knows the re-verification period for the
-    # instrument type and calculates the expiry date itself.
-    # The trader does not type it in.
+    # The system works out the expiry itself from the instrument
+    # type + the State's config. Nobody types a date in, so a cert
+    # can never disagree with its own period.
     # --------------------------------------------------------
 
-    months = REVERIFICATION_MONTHS[instrument_type]
+    # No expiry field on the form at all. Can't be typed in, so a
+    # certificate can never contradict its own period.
+    months = config.months_for(state_code, instrument_type)
 
     expiry_date = add_months(verification_date, months)
-
-    if expiry_override_text:
-
-        override = parse_date(expiry_override_text)
-
-        if override is None:
-            audit_log("certificate rejected", target=serial_number, detail="invalid expiry override")
-            return "The expiry override is not a valid date", 400
-
-        expiry_date = override
 
 
     # --------------------------------------------------------
@@ -326,9 +354,10 @@ def submit():
             max_permissible_error,
             reverification_months,
             officer_id,
-            officer_name
+            officer_name,
+            state_code
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         serial_number,
         owner_name,
@@ -339,10 +368,66 @@ def submit():
         max_permissible_error,
         months,
         officer["id"],
-        officer["full_name"]
+        officer["full_name"],
+        state_code
     ))
 
     certificate_id = cursor.lastrowid
+    certificate_code = f"CERT-{certificate_id:04d}"
+
+    # ---- SIGN IT --------------------------------------------------
+    # We sign the fields as they were just stored. Edit any of them
+    # later and the /verify page will say "signature invalid".
+    signature = signing.sign({
+        "code": certificate_code,
+        "serial_number": serial_number,
+        "owner_name": owner_name,
+        "instrument_type": instrument_type,
+        "verified_on": verification_date.isoformat(),
+        "expires_on": expiry_date.isoformat(),
+        "officer_id": officer["id"],
+    })
+    cursor.execute("UPDATE certificates SET signature = ? WHERE id = ?",
+                   (signature, certificate_id))
+
+    # ---- FRAUD CHECKS ---------------------------------------------
+    # Krishna's rules. We do NOT block the issue - we flag it, bc a
+    # rule firing is a suspicion, not a conviction. The officer decides.
+    existing = [
+        {"code": f"CERT-{r[0]:04d}", "serial_number": r[1], "owner_name": r[2],
+         "expires_on": r[3], "verified_on": r[4]}
+        for r in cursor.execute(
+            "SELECT id, serial_number, owner_name, expiry_date, "
+            "verification_date FROM certificates WHERE id != ?",
+            (certificate_id,)).fetchall()
+    ]
+    todays = cursor.execute(
+        "SELECT id FROM certificates WHERE officer_id = ? AND "
+        "verification_date = ?",
+        (officer["id"], verification_date.isoformat())).fetchall()
+
+    alerts = fraud.run_all_checks(
+        new_cert={
+            "code": certificate_code, "serial_number": serial_number,
+            "owner_name": owner_name, "instrument_type": instrument_type,
+            "verified_on": verification_date.isoformat(),
+            "expires_on": expiry_date.isoformat(),
+            "jurisdiction": officer.get("jurisdiction"),
+            "state_code": state_code,
+        },
+        existing_certs=existing,
+        officer={"id": officer["id"], "full_name": officer["full_name"],
+                 "jurisdiction": officer.get("jurisdiction"),
+                 "state_code": officer.get("state_code"), "kind": "lmo"},
+        certs_today=todays,
+        limit=config.daily_limit(state_code),
+    )
+    for a in alerts:
+        cursor.execute(
+            """INSERT INTO fraud_alerts (at, certificate_code, serial_number,
+                   officer_name, reason) VALUES (?, ?, ?, ?, ?)""",
+            (datetime.now().strftime("%Y-%m-%d %H:%M"), certificate_code,
+             serial_number, officer["full_name"], a))
 
     conn.commit()
 
@@ -358,8 +443,6 @@ def submit():
     # --------------------------------------------------------
     # CERTIFICATE CODE AND QR
     # --------------------------------------------------------
-
-    certificate_code = f"CERT-{certificate_id:04d}"
 
     verification_url = f"{BASE_URL}/verify/{certificate_code}"
 
@@ -456,7 +539,10 @@ def verify(certificate_id):
             instrument_class,
             max_permissible_error,
             reverification_months,
-            officer_name
+            officer_name,
+            signature,
+            state_code,
+            officer_id
 
         FROM certificates
 
@@ -515,7 +601,25 @@ def verify(certificate_id):
         "max_permissible_error": row[7] or "Not recorded",
         "reverification_months": row[8],
         "officer_name": row[9] or "Not recorded",
+        "state_code": row[11] or "",
     }
+
+    # ---- IS THE SIGNATURE STILL GOOD? -----------------------------
+    # We rebuild the payload from what is stored RIGHT NOW. If anyone
+    # edited a field in the DB, this comes back False.
+    signature_ok = signing.verify({
+        "code": certificate["code"],
+        "serial_number": row[1],
+        "owner_name": row[2],
+        "instrument_type": row[3],
+        "verified_on": row[4],
+        "expires_on": row[5],
+        "officer_id": row[12],
+    }, row[10])
+
+    # ---- WHAT THE LAW SAYS, IF IT HAS EXPIRED ---------------------
+    enforcement = (config.enforcement_for("expired certificate")
+                   if status == "EXPIRED" else None)
 
     return render_template(
         "verify.html",
@@ -523,19 +627,23 @@ def verify(certificate_id):
         status=status,
         days=days,
         checked_on=today.isoformat(),
-        reminder_window=REMINDER_WINDOW_DAYS,
-        period_note=PERIOD_SOURCE_NOTE
+        reminder_window=config.reminder_days(certificate.get("state_code")),
+        period_note=PERIOD_SOURCE_NOTE,
+        signature_ok=signature_ok,
+        enforcement=enforcement
     )
 
 
 # ============================================================
 # REMINDERS
 # ============================================================
-# The officer's view of what is about to lapse. This is the
-# list the system would send reminders from.
+# Officer's view of what's about to lapse. Login required - this
+# used to be wide open, which meant anyone could read the whole
+# due-list w/o an account.
 # ------------------------------------------------------------
 
 @app.route("/reminders")
+@role_required("lab_officer", "district_officer", "admin")
 def reminders():
 
     today = date.today()

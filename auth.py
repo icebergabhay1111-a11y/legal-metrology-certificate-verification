@@ -20,6 +20,7 @@ full, ready to paste, in INTEGRATION.md next to this file.
 """
 
 import functools
+import os
 import sqlite3
 from datetime import date, datetime, timedelta
 
@@ -92,6 +93,60 @@ def init_auth_db():
         )
     """)
 
+    conn.commit()
+    conn.close()
+
+
+# ============================================================
+# DEMO ACCOUNTS - THIS IS WHAT MAKES LOGIN WORK ON RENDER
+# ============================================================
+# THE PROBLEM IT FIXES:
+# Render's free tier has an EPHEMERAL filesystem. Their own docs say
+# "any changes to your web service's filesystem (uploaded images, local
+# SQLite databases, etc.) are lost every time the service redeploys,
+# restarts, or spins down." So certificates.db - incl. the users table -
+# is wiped on every deploy. seed_users.py can't help bc there's no shell
+# on the free plan. Result: 0 users -> nobody can log in.
+#
+# THE FIX: create the accounts at startup, every startup. Idempotent,
+# i.e. running it again does nothing if the user already exists.
+#
+# Passwords come from env vars if set (do that on Render), else the
+# demo defaults below. Change them by setting the env vars - no code
+# edit, no redeploy of the code itself.
+# ------------------------------------------------------------
+
+DEMO_USERS = [
+    # username,   env var for pw,   full name,                 role,               state, jurisdiction
+    ("trader1",   "PW_TRADER",      "Ramesh Trader",           "trader",           "TN", "Chennai"),
+    ("lab1",      "PW_LAB",         "Priya Lab Officer",       "lab_officer",      "TN", "Chennai"),
+    ("district1", "PW_DISTRICT",    "Suresh District Officer", "district_officer", "TN", "Chennai"),
+    ("admin1",    "PW_ADMIN",       "Admin User",              "admin",            "TN", "State HQ"),
+    ("mz1",       "PW_MZ",          "Lalrin Lab Officer",      "lab_officer",      "MZ", "Aizawl"),
+]
+
+DEFAULT_DEMO_PASSWORD = "sahidaam2026"
+
+
+def ensure_demo_users():
+    """Make sure the four demo logins exist. Runs on every boot.
+
+    Skips anyone already there, so it never overwrites a real password.
+    """
+    conn = get_db()
+    cur = conn.cursor()
+    for username, env_var, full_name, role, state_code, jurisdiction in DEMO_USERS:
+        cur.execute("SELECT id FROM users WHERE username = ?", (username,))
+        if cur.fetchone():
+            continue
+        password = os.environ.get(env_var) or DEFAULT_DEMO_PASSWORD
+        cur.execute(
+            """INSERT INTO users
+               (username, password_hash, full_name, role, state_code, jurisdiction)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (username, generate_password_hash(password), full_name, role,
+             state_code, jurisdiction),
+        )
     conn.commit()
     conn.close()
 
@@ -292,10 +347,18 @@ def dashboard():
 
     conn.close()
 
-    # Krishna's fraud-rules engine plugs in here once it exists.
-    # Left empty rather than faked, so the dashboard is honest
-    # about what it currently detects.
-    fraud_alerts = []
+    # Krishna's rules (fraud.py) write into this table at the moment a
+    # certificate is issued. We just read them out here.
+    try:
+        conn2 = get_db()
+        fraud_alerts = conn2.execute(
+            """SELECT id, at, certificate_code, serial_number, officer_name,
+                      reason, status
+               FROM fraud_alerts ORDER BY id DESC LIMIT 50"""
+        ).fetchall()
+        conn2.close()
+    except sqlite3.Error:
+        fraud_alerts = []      # table not made yet - don't kill the page
 
     return render_template(
         "dashboard.html",

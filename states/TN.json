@@ -1,0 +1,20 @@
+{
+  "state_code": "TN",
+  "state_name": "Tamil Nadu",
+  "reminder_window_days": 60,
+  "daily_issue_limit": 40,
+  "jurisdictions": ["Chennai", "Coimbatore", "Madurai", "Salem"],
+  "reverification_months": {
+    "Weight": 24, "Capacity measure": 24, "Length measure": 24,
+    "Measuring tape": 24, "Beam scale": 24, "Counter machine": 24,
+    "Storage tank": 60, "Electronic weighing instrument": 12,
+    "Weighbridge": 12, "Fuel dispensing unit": 12,
+    "Automatic weighing instrument": 12, "Other instrument": 12
+  },
+  "fees_inr": {
+    "Weight": 40, "Weighbridge": 1500, "Fuel dispensing unit": 500,
+    "Electronic weighing instrument": 150, "Storage tank": 2000,
+    "Other instrument": 100
+  },
+  "fee_source": "PLACEHOLDER - not yet verified against a published Tamil Nadu fee schedule. Krishna to replace or mark unverified aloud."
+}

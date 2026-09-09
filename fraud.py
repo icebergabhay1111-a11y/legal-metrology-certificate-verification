@@ -1,116 +1,159 @@
-def check_duplicate_serial(cert, existing_certs):
-    """
-    Rule 1: Duplicate serial
-    Checks if the same instrument serial number already has a live certificate under a different owner.
-    """
-    serial = cert.get("serial_number")
-    owner = cert.get("owner_name")
+"""
+fraud.py - the four checks that catch a faker.
 
-    for existing in existing_certs:
-        if existing.get("serial_number") == serial:
-            if existing.get("is_live", True) and existing.get("owner_name") != owner:
-                cert_id = existing.get("certificate_id", "UNKNOWN")
-                return f"Serial {serial} is already certified to a different owner under {cert_id}."
-    return None
+Owner: Krishna (26BDE0134) - branch feat/fraud-rules
 
+Plain Python. No Flask, no DB calls. Each rule gets data in, returns
+either None (all good) or a short sentence saying what looks wrong.
+That makes them easy to test, and easy for anyone to read.
 
-def check_out_of_jurisdiction(cert):
-    """
-    Rule 2: Out of jurisdiction
-    Checks if an issuing officer or GATC is operating outside assigned jurisdiction or state limits.
-    """
-    # Officer jurisdiction check
-    officer_id = cert.get("officer_id")
-    officer_jurisdiction = cert.get("officer_jurisdiction")
-    instrument_jurisdiction = cert.get("instrument_jurisdiction")
+Answers the mentor's q: "how to catch fakers".
 
-    if officer_id and officer_jurisdiction and instrument_jurisdiction:
-        if officer_jurisdiction != instrument_jurisdiction:
-            return (
-                f"Officer {officer_id} is assigned to {officer_jurisdiction}; "
-                f"this instrument is in {instrument_jurisdiction}."
-            )
+A cert here is just a dict w/ these keys:
+    code, serial_number, owner_name, instrument_type,
+    verified_on, expires_on, officer_id, officer_name,
+    jurisdiction, state_code
 
-    # GATC state check
-    gatc_id = cert.get("gatc_id")
-    gatc_state = cert.get("gatc_approved_state")
-    instrument_state = cert.get("instrument_state")
+An officer is a dict w/:
+    id, full_name, jurisdiction, state_code, kind ('lmo' or 'gatc'),
+    approved_state, approved_categories (list)
+"""
 
-    if gatc_id and gatc_state and instrument_state:
-        if gatc_state != instrument_state:
-            return (
-                f"GATC {gatc_id} is approved for {gatc_state}; "
-                f"this instrument is in {instrument_state}."
-            )
-
-    return None
+from datetime import date, datetime
 
 
-def check_improbable_volume(cert, existing_certs, config):
-    """
-    Rule 3: Improbable volume
-    Checks if an officer issues more certificates in a day than allowed by the configuration threshold.
-    """
-    officer_id = cert.get("officer_id")
-    issue_date = cert.get("issue_date")
-    limit = config.get("max_daily_certificates_per_officer", 40)
-
-    if not officer_id or not issue_date:
+def _as_date(text):
+    """'2026-09-09' -> date. Junk -> None. Never raises."""
+    try:
+        return datetime.strptime(str(text).strip(), "%Y-%m-%d").date()
+    except (ValueError, TypeError, AttributeError):
         return None
 
-    # Count certificates issued today by this officer (including the current new certificate)
-    daily_count = 1
-    for existing in existing_certs:
-        if existing.get("officer_id") == officer_id and existing.get("issue_date") == issue_date:
-            daily_count += 1
 
-    if daily_count > limit:
-        return f"Officer {officer_id} has issued {daily_count} certificates today; the configured limit is {limit}."
+# ============================================================
+# RULE 1 - same serial, different owner
+# ============================================================
 
+def check_duplicate_serial(new_cert, existing_certs):
+    """Same instrument serial already live under a DIFFERENT owner.
+
+    Real-world case this catches: one machine's certificate being
+    copied onto another shop's machine.
+    """
+    serial = (new_cert.get("serial_number") or "").strip().upper()
+    owner = (new_cert.get("owner_name") or "").strip().lower()
+    today = date.today()
+
+    for old in existing_certs:
+        if old.get("code") == new_cert.get("code"):
+            continue                                    # itself, skip
+        if (old.get("serial_number") or "").strip().upper() != serial:
+            continue
+        if (old.get("owner_name") or "").strip().lower() == owner:
+            continue                                    # same owner, fine
+        expires = _as_date(old.get("expires_on"))
+        if expires and expires >= today:                # still live
+            return (f"Serial {serial} is already certified to a different "
+                    f"owner under {old.get('code')}.")
     return None
 
 
-def check_lapsed_and_reregistered(cert, existing_certs):
-    """
-    Rule 4: Lapsed and re-registered
-    Checks if an expired instrument is registered under a new owner without prior re-verification.
-    """
-    serial = cert.get("serial_number")
-    new_owner = cert.get("owner_name")
-    is_reverified = cert.get("is_reverified", False)
+# ============================================================
+# RULE 2 - issued outside the issuer's patch
+# ============================================================
 
-    if is_reverified:
+def check_out_of_jurisdiction(new_cert, officer):
+    """Officer working outside their area, or a GATC outside its State.
+
+    The GATC half is not our invention. PIB release 2266230 of
+    27 May 2026 says a GATC may verify only inside the State/UT it was
+    approved for. Act s.24(3) says who notifies a GATC.
+    """
+    if officer.get("kind") == "gatc":
+        approved_state = (officer.get("approved_state") or "").upper()
+        cert_state = (new_cert.get("state_code") or "").upper()
+        if approved_state and cert_state and approved_state != cert_state:
+            return (f"Test centre {officer.get('full_name')} is approved for "
+                    f"{approved_state} only; this instrument is in {cert_state}.")
+
+        cats = [c.strip().lower() for c in officer.get("approved_categories", [])]
+        itype = (new_cert.get("instrument_type") or "").strip().lower()
+        if cats and itype and itype not in cats:
+            return (f"Test centre {officer.get('full_name')} is not approved "
+                    f"for {new_cert.get('instrument_type')}.")
         return None
 
-    for existing in existing_certs:
-        if existing.get("serial_number") == serial:
-            if existing.get("is_expired", False) and existing.get("owner_name") != new_owner:
-                expiry_date = existing.get("expiry_date", "UNKNOWN")
-                return f"Serial {serial} expired on {expiry_date} and has been re-registered without re-verification."
-
+    # Ordinary Legal Metrology Officer - just check the area.
+    off_area = (officer.get("jurisdiction") or "").strip().lower()
+    cert_area = (new_cert.get("jurisdiction") or "").strip().lower()
+    if off_area and cert_area and off_area != cert_area:
+        return (f"Officer {officer.get('full_name')} is assigned to "
+                f"{officer.get('jurisdiction')}; this instrument is in "
+                f"{new_cert.get('jurisdiction')}.")
     return None
 
 
-def run_all_checks(cert, existing_certs, config):
+# ============================================================
+# RULE 3 - too many in one day
+# ============================================================
+
+def check_improbable_volume(officer, certs_today, limit=40):
+    """One officer issuing more in a day than is physically possible.
+
+    limit comes from the State config file, NOT hard-coded law.
     """
-    Runs all fraud detection rules and returns a list of detected issues.
+    n = len(certs_today)
+    if n > limit:
+        return (f"Officer {officer.get('full_name')} has issued {n} "
+                f"certificates today; the configured limit is {limit}.")
+    return None
+
+
+# ============================================================
+# RULE 4 - lapsed, then quietly re-registered
+# ============================================================
+
+def check_lapsed_reregistration(new_cert, existing_certs):
+    """Expired instrument re-registered to a new owner, never re-verified.
+
+    i.e. somebody tries to wash an expired machine clean by moving it
+    to a new name instead of getting it re-verified.
     """
-    issues = []
+    serial = (new_cert.get("serial_number") or "").strip().upper()
+    owner = (new_cert.get("owner_name") or "").strip().lower()
+    new_verified = _as_date(new_cert.get("verified_on"))
+    today = date.today()
 
-    res1 = check_duplicate_serial(cert, existing_certs)
-    if res1:
-        issues.append(res1)
+    for old in existing_certs:
+        if old.get("code") == new_cert.get("code"):
+            continue
+        if (old.get("serial_number") or "").strip().upper() != serial:
+            continue
+        if (old.get("owner_name") or "").strip().lower() == owner:
+            continue
+        expires = _as_date(old.get("expires_on"))
+        if not expires or expires >= today:
+            continue                                    # not expired, skip
+        # It IS expired and the owner changed. Only OK if the new cert
+        # was actually verified after the old one lapsed.
+        if new_verified is None or new_verified <= expires:
+            return (f"Serial {serial} expired on {expires.isoformat()} and has "
+                    f"been re-registered without re-verification.")
+    return None
 
-    res2 = check_out_of_jurisdiction(cert)
-    if res2:
-        issues.append(res2)
 
-    res3 = check_improbable_volume(cert, existing_certs, config)
-    if res3:
-        issues.append(res3)
+# ============================================================
+# RUN THEM ALL
+# ============================================================
 
-    res4 = check_lapsed_and_reregistered(cert, existing_certs)
-    if res4:
-        issues.append(res4)
-
-    return issues
+def run_all_checks(new_cert, existing_certs, officer, certs_today=None,
+                   limit=40):
+    """Run every rule. Returns a list of problems, [] if clean."""
+    certs_today = certs_today or []
+    found = [
+        check_duplicate_serial(new_cert, existing_certs),
+        check_out_of_jurisdiction(new_cert, officer),
+        check_improbable_volume(officer, certs_today, limit),
+        check_lapsed_reregistration(new_cert, existing_certs),
+    ]
+    return [f for f in found if f]

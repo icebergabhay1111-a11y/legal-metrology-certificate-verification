@@ -107,6 +107,19 @@
             <label for="owner_name">Owner name</label>
             <input type="text" id="owner_name" name="owner_name" required>
 
+            <label for="state_code">State or Union Territory</label>
+            <select id="state_code" name="state_code" required>
+                {% for code, name in states %}
+                    <option value="{{ code }}"
+                      {% if code == selected_state %}selected{% endif %}>
+                      {{ name }} ({{ code }})</option>
+                {% endfor %}
+            </select>
+            <div class="hint">
+                Each State sets its own fee, re-verification period and
+                reminder window. Act s.53(2)(c) and (d).
+            </div>
+
             <label for="instrument_type">Instrument type</label>
             <select id="instrument_type" name="instrument_type" required>
                 <option value="">Select an instrument type</option>
@@ -130,13 +143,6 @@
             <label for="verification_date">Verification date</label>
             <input type="date" id="verification_date" name="verification_date"
                    value="{{ today }}" required>
-
-            <label for="expiry_date">Expiry date override (demonstration only)</label>
-            <input type="date" id="expiry_date" name="expiry_date">
-            <div class="hint">
-                Leave this blank in normal use. Fill it with a past date only to show
-                what an expired certificate looks like when scanned.
-            </div>
 
             <button type="submit">Submit application</button>
 

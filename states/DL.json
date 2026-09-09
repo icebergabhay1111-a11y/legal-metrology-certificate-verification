@@ -1,0 +1,20 @@
+{
+  "state_code": "DL",
+  "state_name": "Delhi",
+  "reminder_window_days": 45,
+  "daily_issue_limit": 35,
+  "jurisdictions": ["North Delhi", "South Delhi", "East Delhi", "West Delhi"],
+  "reverification_months": {
+    "Weight": 24, "Capacity measure": 24, "Length measure": 24,
+    "Measuring tape": 24, "Beam scale": 24, "Counter machine": 24,
+    "Storage tank": 60, "Electronic weighing instrument": 12,
+    "Weighbridge": 12, "Fuel dispensing unit": 12,
+    "Automatic weighing instrument": 12, "Other instrument": 12
+  },
+  "fees_inr": {
+    "Weight": 50, "Weighbridge": 2000, "Fuel dispensing unit": 600,
+    "Electronic weighing instrument": 200, "Storage tank": 2500,
+    "Other instrument": 120
+  },
+  "fee_source": "PLACEHOLDER - not yet verified against the Delhi published fee schedule. Revenue context (verified): Delhi collected Rs 10.39 crore under Major Head 1475 / Minor Head 106 in 2023-24 - GNCTD Receipts Budget 2025-26, page 17."
+}
