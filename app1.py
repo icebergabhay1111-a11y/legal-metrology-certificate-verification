@@ -276,21 +276,27 @@ def submit():
     # are saved together or not at all.
     with db.engine.begin() as conn:
 
-        certificate_id = conn.execute(db.text("""
+        insert_sql = """
             INSERT INTO certificates
                 (serial_number, owner_name, instrument_type, verification_date,
                  expiry_date, instrument_class, max_permissible_error,
                  reverification_months, officer_id, officer_name, state_code)
             VALUES (:serial, :owner, :itype, :verified, :expires, :iclass, :mpe,
                     :months, :officer_id, :officer_name, :state)
-            RETURNING id
-        """), dict(
+        """
+        params = dict(
             serial=serial_number, owner=owner_name, itype=instrument_type,
             verified=verification_date.isoformat(), expires=expiry_date.isoformat(),
             iclass=instrument_class, mpe=max_permissible_error, months=months,
             officer_id=officer["id"], officer_name=officer["full_name"],
             state=state_code,
-        )).scalar_one()
+        )
+        # PostgreSQL hands the new id back with RETURNING. Older SQLite builds
+        # lack RETURNING, so there we read lastrowid instead.
+        if db.engine.dialect.name == "postgresql":
+            certificate_id = conn.execute(db.text(insert_sql + " RETURNING id"), params).scalar_one()
+        else:
+            certificate_id = conn.execute(db.text(insert_sql), params).lastrowid
 
         certificate_code = f"CERT-{certificate_id:04d}"
 
