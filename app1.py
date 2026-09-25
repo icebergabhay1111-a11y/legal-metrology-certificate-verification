@@ -29,7 +29,6 @@ DEPLOY
 
 from flask import Flask, render_template, request
 from datetime import date, datetime, timedelta
-import sqlite3
 import os
 import io
 import base64
@@ -50,13 +49,14 @@ if IS_PRODUCTION and not os.environ.get("SECRET_KEY"):
     raise RuntimeError("SECRET_KEY is not set. Refusing to start in production.")
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 
+import db              # the only file that talks to the database
 import auth
 import config          # per-State settings + Shreyash's enforcement.json
 import signing         # Ed25519 signature on every certificate
 import fraud           # Krishna's four "catch a faker" rules
 
 app.register_blueprint(auth.auth_bp)
-auth.init_auth_db()
+db.upgrade_to_latest()     # create or update every table - see migrations/
 auth.ensure_demo_users()   # makes login work after every deploy - see auth.py
 from auth import role_required, current_user, log as audit_log
 
@@ -64,7 +64,7 @@ from auth import role_required, current_user, log as audit_log
 # CONFIGURATION
 # ============================================================
 
-DATABASE = "certificates.db"
+DATABASE = db.SQLITE_FILE   # kept for old imports; db.py decides the real database
 
 # Render sets PORT for us. Locally we use 5050.
 PORT = int(os.environ.get("PORT", 5050))
@@ -147,78 +147,6 @@ def parse_date(text):
         return None
 
 
-# ============================================================
-# DATABASE INITIALIZATION
-# ============================================================
-
-def init_db():
-
-    conn = sqlite3.connect(DATABASE)
-
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS certificates (
-
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-
-            serial_number TEXT NOT NULL,
-
-            owner_name TEXT NOT NULL,
-
-            instrument_type TEXT NOT NULL,
-
-            verification_date TEXT NOT NULL,
-
-            expiry_date TEXT NOT NULL
-
-        )
-    """)
-
-    # --------------------------------------------------------
-    # MIGRATION
-    # --------------------------------------------------------
-    # Old DBs were made before some of these columns existed.
-    # Add whatever is missing. Safe to run every boot.
-    # --------------------------------------------------------
-
-    cursor.execute("PRAGMA table_info(certificates)")
-
-    existing = {row[1] for row in cursor.fetchall()}
-
-    for column, ddl in [
-        ("instrument_class",       "TEXT"),
-        ("max_permissible_error",  "TEXT"),
-        ("reverification_months",  "INTEGER"),
-        ("officer_id",             "INTEGER"),
-        ("officer_name",           "TEXT"),
-        ("signature",              "TEXT"),
-        ("state_code",             "TEXT"),
-    ]:
-        if column not in existing:
-            cursor.execute(
-                f"ALTER TABLE certificates ADD COLUMN {column} {ddl}"
-            )
-
-    # Fraud alerts raised by fraud.py at the moment of issue.
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS fraud_alerts (
-            id               INTEGER PRIMARY KEY AUTOINCREMENT,
-            at               TEXT NOT NULL,
-            certificate_code TEXT,
-            serial_number    TEXT,
-            officer_name     TEXT,
-            reason           TEXT NOT NULL,
-            status           TEXT NOT NULL DEFAULT 'open'
-        )
-    """)
-
-    conn.commit()
-
-    conn.close()
-
-
-init_db()          # module level, so gunicorn app1:app works
 
 
 def qr_data_uri(text):
@@ -344,100 +272,86 @@ def submit():
     # INSERT INTO DATABASE
     # --------------------------------------------------------
 
-    conn = sqlite3.connect(DATABASE)
+    # One transaction: the certificate, its signature and any fraud alerts
+    # are saved together or not at all.
+    with db.engine.begin() as conn:
 
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        INSERT INTO certificates
-        (
-            serial_number,
-            owner_name,
-            instrument_type,
-            verification_date,
-            expiry_date,
-            instrument_class,
-            max_permissible_error,
-            reverification_months,
-            officer_id,
-            officer_name,
-            state_code
+        insert_sql = """
+            INSERT INTO certificates
+                (serial_number, owner_name, instrument_type, verification_date,
+                 expiry_date, instrument_class, max_permissible_error,
+                 reverification_months, officer_id, officer_name, state_code)
+            VALUES (:serial, :owner, :itype, :verified, :expires, :iclass, :mpe,
+                    :months, :officer_id, :officer_name, :state)
+        """
+        params = dict(
+            serial=serial_number, owner=owner_name, itype=instrument_type,
+            verified=verification_date.isoformat(), expires=expiry_date.isoformat(),
+            iclass=instrument_class, mpe=max_permissible_error, months=months,
+            officer_id=officer["id"], officer_name=officer["full_name"],
+            state=state_code,
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        serial_number,
-        owner_name,
-        instrument_type,
-        verification_date.isoformat(),
-        expiry_date.isoformat(),
-        instrument_class,
-        max_permissible_error,
-        months,
-        officer["id"],
-        officer["full_name"],
-        state_code
-    ))
+        # PostgreSQL hands the new id back with RETURNING. Older SQLite builds
+        # lack RETURNING, so there we read lastrowid instead.
+        if db.engine.dialect.name == "postgresql":
+            certificate_id = conn.execute(db.text(insert_sql + " RETURNING id"), params).scalar_one()
+        else:
+            certificate_id = conn.execute(db.text(insert_sql), params).lastrowid
 
-    certificate_id = cursor.lastrowid
-    certificate_code = f"CERT-{certificate_id:04d}"
+        certificate_code = f"CERT-{certificate_id:04d}"
 
-    # ---- SIGN IT --------------------------------------------------
-    # We sign the fields as they were just stored. Edit any of them
-    # later and the /verify page will say "signature invalid".
-    signature = signing.sign({
-        "code": certificate_code,
-        "serial_number": serial_number,
-        "owner_name": owner_name,
-        "instrument_type": instrument_type,
-        "verified_on": verification_date.isoformat(),
-        "expires_on": expiry_date.isoformat(),
-        "officer_id": officer["id"],
-    })
-    cursor.execute("UPDATE certificates SET signature = ? WHERE id = ?",
-                   (signature, certificate_id))
-
-    # ---- FRAUD CHECKS ---------------------------------------------
-    # Krishna's rules. We do NOT block the issue - we flag it, bc a
-    # rule firing is a suspicion, not a conviction. The officer decides.
-    existing = [
-        {"code": f"CERT-{r[0]:04d}", "serial_number": r[1], "owner_name": r[2],
-         "expires_on": r[3], "verified_on": r[4]}
-        for r in cursor.execute(
-            "SELECT id, serial_number, owner_name, expiry_date, "
-            "verification_date FROM certificates WHERE id != ?",
-            (certificate_id,)).fetchall()
-    ]
-    todays = cursor.execute(
-        "SELECT id FROM certificates WHERE officer_id = ? AND "
-        "verification_date = ?",
-        (officer["id"], verification_date.isoformat())).fetchall()
-
-    alerts = fraud.run_all_checks(
-        new_cert={
-            "code": certificate_code, "serial_number": serial_number,
-            "owner_name": owner_name, "instrument_type": instrument_type,
+        # ---- SIGN IT ----------------------------------------------
+        # We sign the fields as they were just stored. Edit any of them
+        # later and the /verify page will say "signature invalid".
+        signature = signing.sign({
+            "code": certificate_code,
+            "serial_number": serial_number,
+            "owner_name": owner_name,
+            "instrument_type": instrument_type,
             "verified_on": verification_date.isoformat(),
             "expires_on": expiry_date.isoformat(),
-            "jurisdiction": officer.get("jurisdiction"),
-            "state_code": state_code,
-        },
-        existing_certs=existing,
-        officer={"id": officer["id"], "full_name": officer["full_name"],
-                 "jurisdiction": officer.get("jurisdiction"),
-                 "state_code": officer.get("state_code"), "kind": "lmo"},
-        certs_today=todays,
-        limit=config.daily_limit(state_code),
-    )
-    for a in alerts:
-        cursor.execute(
-            """INSERT INTO fraud_alerts (at, certificate_code, serial_number,
-                   officer_name, reason) VALUES (?, ?, ?, ?, ?)""",
-            (datetime.now().strftime("%Y-%m-%d %H:%M"), certificate_code,
-             serial_number, officer["full_name"], a))
+            "officer_id": officer["id"],
+        })
+        conn.execute(db.text("UPDATE certificates SET signature = :sig WHERE id = :id"),
+                     dict(sig=signature, id=certificate_id))
 
-    conn.commit()
+        # ---- FRAUD CHECKS -----------------------------------------
+        # Krishna's rules. We do NOT block the issue - we flag it, bc a
+        # rule firing is a suspicion, not a conviction. The officer decides.
+        other_rows = conn.execute(db.text(
+            "SELECT id, serial_number, owner_name, expiry_date, verification_date "
+            "FROM certificates WHERE id != :id"), dict(id=certificate_id)).fetchall()
+        existing = []
+        for r in other_rows:
+            existing.append({"code": f"CERT-{r[0]:04d}", "serial_number": r[1],
+                             "owner_name": r[2], "expires_on": r[3], "verified_on": r[4]})
+        todays = conn.execute(db.text(
+            "SELECT id FROM certificates WHERE officer_id = :officer_id "
+            "AND verification_date = :day"),
+            dict(officer_id=officer["id"], day=verification_date.isoformat())).fetchall()
 
-    conn.close()
+        alerts = fraud.run_all_checks(
+            new_cert={
+                "code": certificate_code, "serial_number": serial_number,
+                "owner_name": owner_name, "instrument_type": instrument_type,
+                "verified_on": verification_date.isoformat(),
+                "expires_on": expiry_date.isoformat(),
+                "jurisdiction": officer.get("jurisdiction"),
+                "state_code": state_code,
+            },
+            existing_certs=existing,
+            officer={"id": officer["id"], "full_name": officer["full_name"],
+                     "jurisdiction": officer.get("jurisdiction"),
+                     "state_code": officer.get("state_code"), "kind": "lmo"},
+            certs_today=todays,
+            limit=config.daily_limit(state_code),
+        )
+        for a in alerts:
+            conn.execute(db.text(
+                "INSERT INTO fraud_alerts (at, certificate_code, serial_number, "
+                "officer_name, reason) VALUES (:at, :code, :serial, :officer, :reason)"),
+                dict(at=datetime.now().strftime("%Y-%m-%d %H:%M"), code=certificate_code,
+                     serial=serial_number, officer=officer["full_name"], reason=a))
 
     audit_log(
         "certificate issued",
@@ -515,6 +429,9 @@ def verify(certificate_id):
 
     try:
         certificate_id = int(certificate_id)
+        if not 0 < certificate_id < 2**31:
+            # Bigger than the database column holds: cannot exist.
+            raise ValueError("out of range")
 
     except ValueError:
 
@@ -530,11 +447,7 @@ def verify(certificate_id):
     # SEARCH DATABASE
     # --------------------------------------------------------
 
-    conn = sqlite3.connect(DATABASE)
-
-    cursor = conn.cursor()
-
-    cursor.execute("""
+    row = db.fetch_one("""
         SELECT
             id,
             serial_number,
@@ -552,12 +465,8 @@ def verify(certificate_id):
 
         FROM certificates
 
-        WHERE id = ?
-    """, (certificate_id,))
-
-    row = cursor.fetchone()
-
-    conn.close()
+        WHERE id = :id
+    """, id=certificate_id)
 
     if row is None:
 
@@ -656,26 +565,11 @@ def reminders():
 
     cutoff = today + timedelta(days=REMINDER_WINDOW_DAYS)
 
-    conn = sqlite3.connect(DATABASE)
-
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT
-            id,
-            serial_number,
-            owner_name,
-            instrument_type,
-            expiry_date
-
+    rows = db.fetch_all("""
+        SELECT id, serial_number, owner_name, instrument_type, expiry_date
         FROM certificates
-
         ORDER BY expiry_date ASC
     """)
-
-    rows = cursor.fetchall()
-
-    conn.close()
 
     due = []
     expired = []

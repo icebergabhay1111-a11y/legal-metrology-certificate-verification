@@ -3,15 +3,8 @@ auth.py — login, roles, and the audit log.
 
 Owner: Abhay (26BDE0132) — branch feat/auth-and-roles
 
-This file is self-contained on purpose, so it drops into app1.py
-with three lines and nothing else has to move:
-
-    import auth
-    app.register_blueprint(auth.auth_bp)
-    auth.init_auth_db()
-
-Put those three lines near the top of app1.py, after `app = Flask(__name__)`
-and before `init_db()`. That's the whole connection.
+app1.py wires this in with `app.register_blueprint(auth.auth_bp)`.
+Its tables (users, audit, reports) are created by migrations/, not here.
 
 One more thing is NOT optional but IS a small edit to app1.py's own
 code, not to this file: stamping officer_id / officer_name onto a
@@ -21,16 +14,17 @@ full, ready to paste, in INTEGRATION.md next to this file.
 
 import functools
 import os
-import sqlite3
 from datetime import date, datetime, timedelta
 
 from flask import (
     Blueprint, Response, g, redirect, render_template,
     request, session, url_for,
 )
+from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.security import check_password_hash, generate_password_hash
 
-DATABASE = "certificates.db"
+import db
+
 
 # Four roles. Do not add a fifth — see the task brief.
 ROLES = ("trader", "lab_officer", "district_officer", "admin")
@@ -42,59 +36,8 @@ auth_bp = Blueprint("auth", __name__)
 # DATABASE
 # ============================================================
 
-def get_db():
-    conn = sqlite3.connect(DATABASE)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def init_auth_db():
-    """Create users, audit, and reports tables if missing.
-
-    Safe to call on every startup — same IF NOT EXISTS pattern
-    app1.py already uses for the certificates table. Call this
-    once, at import time in app1.py, right after init_db().
-    """
-
-    conn = get_db()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            username      TEXT NOT NULL UNIQUE,
-            password_hash TEXT NOT NULL,
-            full_name     TEXT NOT NULL,
-            role          TEXT NOT NULL,
-            state_code    TEXT,
-            jurisdiction  TEXT
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS audit (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            at         TEXT NOT NULL,
-            actor_id   INTEGER,
-            actor_name TEXT NOT NULL,
-            action     TEXT NOT NULL,
-            target     TEXT,
-            detail     TEXT
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS reports (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            at            TEXT NOT NULL,
-            serial_number TEXT NOT NULL,
-            description   TEXT NOT NULL,
-            status        TEXT NOT NULL DEFAULT 'open'
-        )
-    """)
-
-    conn.commit()
-    conn.close()
+# Tables are created by migrations (migrations/versions/), not here.
+# Queries go through db.py so the same SQL runs on SQLite and PostgreSQL.
 
 
 # ============================================================
@@ -133,11 +76,8 @@ def ensure_demo_users():
 
     Skips anyone already there, so it never overwrites a real password.
     """
-    conn = get_db()
-    cur = conn.cursor()
     for username, env_var, full_name, role, state_code, jurisdiction in DEMO_USERS:
-        cur.execute("SELECT id FROM users WHERE username = ?", (username,))
-        if cur.fetchone():
+        if db.fetch_one("SELECT id FROM users WHERE username = :u", u=username):
             continue
         password = os.environ.get(env_var)
         if not password and os.environ.get("APP_ENV") == "production":
@@ -145,15 +85,13 @@ def ensure_demo_users():
             print(f"WARNING: {env_var} not set - account '{username}' not created.")
             continue
         password = password or DEFAULT_DEMO_PASSWORD
-        cur.execute(
+        db.run(
             """INSERT INTO users
                (username, password_hash, full_name, role, state_code, jurisdiction)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (username, generate_password_hash(password), full_name, role,
-             state_code, jurisdiction),
+               VALUES (:u, :h, :name, :role, :state, :jur)""",
+            u=username, h=generate_password_hash(password), name=full_name,
+            role=role, state=state_code, jur=jurisdiction,
         )
-    conn.commit()
-    conn.close()
 
 
 # ============================================================
@@ -167,21 +105,12 @@ def log(action, target="", detail=""):
     actor_id = session.get("user_id")
     actor_name = session.get("full_name", "anonymous")
 
-    conn = get_db()
-    conn.execute(
+    db.run(
         """INSERT INTO audit (at, actor_id, actor_name, action, target, detail)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (
-            datetime.now().strftime("%Y-%m-%d %H:%M"),
-            actor_id,
-            actor_name,
-            action,
-            target,
-            detail,
-        ),
+           VALUES (:at, :actor_id, :actor_name, :action, :target, :detail)""",
+        at=datetime.now().strftime("%Y-%m-%d %H:%M"), actor_id=actor_id,
+        actor_name=actor_name, action=action, target=target, detail=detail,
     )
-    conn.commit()
-    conn.close()
 
 
 # ============================================================
@@ -242,11 +171,8 @@ def login():
     username = request.form.get("username", "").strip()
     password = request.form.get("password", "")
 
-    conn = get_db()
-    row = conn.execute(
-        "SELECT * FROM users WHERE username = ?", (username,)
-    ).fetchone()
-    conn.close()
+    found = db.fetch_one("SELECT * FROM users WHERE username = :u", u=username)
+    row = found._mapping if found else None
 
     # Same message either way — never reveal whether the
     # username exists.
@@ -303,13 +229,10 @@ def report():
             error="Serial number and description are both required.",
         )
 
-    conn = get_db()
-    conn.execute(
-        "INSERT INTO reports (at, serial_number, description) VALUES (?, ?, ?)",
-        (datetime.now().strftime("%Y-%m-%d %H:%M"), serial_number, description),
+    db.run(
+        "INSERT INTO reports (at, serial_number, description) VALUES (:at, :serial, :text)",
+        at=datetime.now().strftime("%Y-%m-%d %H:%M"), serial=serial_number, text=description,
     )
-    conn.commit()
-    conn.close()
 
     log("public report received", target=serial_number, detail=description[:200])
 
@@ -326,23 +249,21 @@ def dashboard():
     today = date.today()
     cutoff = today + timedelta(days=60)
 
-    conn = get_db()
-
-    cert_rows = conn.execute("""
+    cert_rows = db.fetch_all("""
         SELECT id, serial_number, owner_name, instrument_type, expiry_date
         FROM certificates
         ORDER BY expiry_date ASC
-    """).fetchall()
+    """)
 
     due, expired = [], []
 
     for row in cert_rows:
         try:
-            expiry = datetime.strptime(row["expiry_date"], "%Y-%m-%d").date()
+            expiry = datetime.strptime(row.expiry_date, "%Y-%m-%d").date()
         except (ValueError, TypeError):
             continue
 
-        item = dict(row)
+        item = dict(row._mapping)
         item["days"] = (expiry - today).days
 
         if expiry < today:
@@ -350,25 +271,21 @@ def dashboard():
         elif expiry <= cutoff:
             due.append(item)
 
-    reports = conn.execute("""
+    reports = db.fetch_all("""
         SELECT id, at, serial_number, description, status
         FROM reports
         ORDER BY at DESC
-    """).fetchall()
-
-    conn.close()
+    """)
 
     # Krishna's rules (fraud.py) write into this table at the moment a
     # certificate is issued. We just read them out here.
     try:
-        conn2 = get_db()
-        fraud_alerts = conn2.execute(
+        fraud_alerts = db.fetch_all(
             """SELECT id, at, certificate_code, serial_number, officer_name,
                       reason, status
                FROM fraud_alerts ORDER BY id DESC LIMIT 50"""
-        ).fetchall()
-        conn2.close()
-    except sqlite3.Error:
+        )
+    except SQLAlchemyError:
         fraud_alerts = []      # table not made yet - don't kill the page
 
     return render_template(
@@ -388,13 +305,11 @@ def dashboard():
 @auth_bp.route("/admin/audit")
 @role_required("admin")
 def audit_log():
-    conn = get_db()
-    entries = conn.execute("""
+    entries = db.fetch_all("""
         SELECT at, actor_name, action, target, detail
         FROM audit
         ORDER BY id DESC
         LIMIT 200
-    """).fetchall()
-    conn.close()
+    """)
 
     return render_template("audit.html", entries=entries)
