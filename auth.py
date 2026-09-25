@@ -267,8 +267,14 @@ def login():
 
     log("login", target=username)
 
-    next_url = request.args.get("next") or url_for("auth.dashboard")
-    return redirect(next_url)
+    return redirect(safe_next(request.args.get("next")))
+
+
+def safe_next(target):
+    """Only follow ?next= to a page on this site, never to another website."""
+    if target and target.startswith("/") and not target.startswith("//") and "\\" not in target:
+        return target
+    return url_for("auth.dashboard")
 
 
 @auth_bp.route("/logout")

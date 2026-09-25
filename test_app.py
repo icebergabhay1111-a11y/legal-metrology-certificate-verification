@@ -294,3 +294,12 @@ def test_production_creates_no_account_without_its_password(monkeypatch):
     importlib.reload(app1)
     assert q("SELECT username FROM users") == [("lab1",)]
     drop_db()
+
+
+def test_login_never_redirects_to_another_website(app_client):
+    """?next= pointing off-site would let a phishing link borrow our login page."""
+    for bad in ("https://evil.example", "//evil.example", "/\\evil.example"):
+        r = app_client.post(f"/login?next={bad}", data={"username": "lab1", "password": PW})
+        assert r.headers["Location"].endswith("/dashboard")
+    r = app_client.post("/login?next=/reminders", data={"username": "lab1", "password": PW})
+    assert r.headers["Location"].endswith("/reminders")
