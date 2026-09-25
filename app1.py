@@ -42,6 +42,12 @@ import qrcode
 
 app = Flask(__name__)
 
+IS_PRODUCTION = os.environ.get("APP_ENV") == "production"
+
+# The session cookie is signed with this. With the public default, anyone
+# could forge a cookie that says role=admin. So production must set its own.
+if IS_PRODUCTION and not os.environ.get("SECRET_KEY"):
+    raise RuntimeError("SECRET_KEY is not set. Refusing to start in production.")
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 
 import auth

@@ -1,6 +1,9 @@
 # Runs the full test suite on every push and pull request.
 name: tests
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
 jobs:
   pytest:
     runs-on: ubuntu-latest

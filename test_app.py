@@ -266,3 +266,31 @@ def test_actions_are_written_to_the_audit_log(app_client):
     login(app_client); issue(app_client)
     actions = {r[0] for r in q("SELECT action FROM audit")}
     assert "login" in actions
+
+
+def test_production_refuses_to_start_without_secret_key(monkeypatch):
+    """A public default secret would let anyone forge an admin session."""
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("SECRET_KEY", raising=False)
+    import importlib
+    import sys
+    with pytest.raises(RuntimeError):
+        if "app1" in sys.modules:
+            importlib.reload(sys.modules["app1"])
+        else:
+            import app1  # noqa: F401
+
+
+def test_production_creates_no_account_without_its_password(monkeypatch):
+    """The demo password in the source must not work on the live site."""
+    drop_db()
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("SECRET_KEY", "test-only")
+    monkeypatch.setenv("PW_LAB", "a-real-password")
+    for var in ("PW_TRADER", "PW_DISTRICT", "PW_ADMIN", "PW_MZ"):
+        monkeypatch.delenv(var, raising=False)
+    import importlib
+    import app1
+    importlib.reload(app1)
+    assert q("SELECT username FROM users") == [("lab1",)]
+    drop_db()

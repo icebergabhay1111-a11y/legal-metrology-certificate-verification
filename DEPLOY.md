@@ -138,6 +138,7 @@ url = os.environ["DATABASE_URL"].replace("postgres://", "postgresql://", 1)
 | `BASE_URL` | `https://legal-metrology-certificate-verification.onrender.com` | Without it the QR points at a private IP and no phone can open it |
 | `SECRET_KEY` | any long random string | Signs the login session cookie. The default is `dev-secret-change-me` — change it |
 | `SIGNING_KEY` | output of `python signing.py --print-key` | Keeps certificate signatures valid across redeploys. Without it a new key is made each boot and old certificates read "NOT VERIFIED" |
-| `PW_LAB` etc. | real passwords | Optional, replaces the demo password |
+| `PW_TRADER`, `PW_LAB`, `PW_DISTRICT`, `PW_ADMIN`, `PW_MZ` | one strong password each | In production an account whose variable is missing is **not created**. The demo password in the source works only locally |
+| `APP_ENV` | `production` | Set this **last**. Turns on the two safety checks: no start without `SECRET_KEY`, no account without its own password |
 
 Start command stays `gunicorn app1:app`.
