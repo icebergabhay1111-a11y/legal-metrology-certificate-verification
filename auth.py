@@ -139,7 +139,12 @@ def ensure_demo_users():
         cur.execute("SELECT id FROM users WHERE username = ?", (username,))
         if cur.fetchone():
             continue
-        password = os.environ.get(env_var) or DEFAULT_DEMO_PASSWORD
+        password = os.environ.get(env_var)
+        if not password and os.environ.get("APP_ENV") == "production":
+            # Never fall back to the password printed in public source.
+            print(f"WARNING: {env_var} not set - account '{username}' not created.")
+            continue
+        password = password or DEFAULT_DEMO_PASSWORD
         cur.execute(
             """INSERT INTO users
                (username, password_hash, full_name, role, state_code, jurisdiction)
