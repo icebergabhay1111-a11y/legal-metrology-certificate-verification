@@ -1,4 +1,5 @@
-# Runs the full test suite on every push and pull request.
+# Runs the full test suite on every push to main and every pull request,
+# once on SQLite (like a laptop) and once on PostgreSQL (like Render + Neon).
 name: tests
 on:
   push:
@@ -7,6 +8,19 @@ on:
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        database: [sqlite, postgres]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci-only
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-retries 10
+    env:
+      DATABASE_URL: ${{ matrix.database == 'postgres' && 'postgresql://postgres:ci-only@localhost:5432/postgres' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

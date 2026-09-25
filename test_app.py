@@ -11,10 +11,11 @@ Each test name says what it proves.
 import datetime
 import os
 import re
-import sqlite3
 import time
 
 import pytest
+
+import db
 
 DB = "certificates.db"
 TODAY = datetime.date.today()
@@ -22,27 +23,23 @@ PW = "sahidaam2026"
 
 
 def q(sql):
-    """Run a read-only query and CLOSE the connection.
-
-    Windows will not let you delete a file that still has an open handle on
-    it, so a connection left dangling here makes every teardown blow up with
-    WinError 32. Linux doesn't care. Always use this, never a bare connect().
-    """
-    conn = sqlite3.connect(DB)
-    try:
-        return conn.execute(sql).fetchall()
-    finally:
-        conn.close()
+    """Run a read-only query through db.py, so it works on SQLite and PostgreSQL."""
+    return [tuple(row) for row in db.fetch_all(sql)]
 
 
 def drop_db():
-    """Delete the DB file so every test starts clean.
+    """Start every test from an empty database.
 
-    Retries for about a second bc Windows can hold the handle for a moment
-    after the last connection closes. If it still won't go, we raise - a
-    stale DB would make a later test fail for a reason that has nothing to
-    do w/ the code.
+    PostgreSQL (CI sets DATABASE_URL): drop every table.
+    SQLite: delete the file. Retries for about a second bc Windows can hold
+    the handle for a moment after the last connection closes.
     """
+    if os.environ.get("APP_ENV") == "production":
+        raise RuntimeError("refusing to wipe a production database")
+    if db.engine.dialect.name == "postgresql":
+        db.run("DROP TABLE IF EXISTS certificates, fraud_alerts, users, audit, "
+               "reports, alembic_version CASCADE")
+        return
     for attempt in range(5):
         if not os.path.exists(DB):
             return
@@ -195,9 +192,7 @@ def test_a_fresh_certificate_has_a_valid_signature(app_client):
 def test_editing_the_database_breaks_the_signature(app_client):
     """The whole anti-forgery claim rests on this one test."""
     login(app_client); issue(app_client)
-    conn = sqlite3.connect(DB)
-    conn.execute("UPDATE certificates SET owner_name = 'Someone Else' WHERE id = 1")
-    conn.commit(); conn.close()
+    db.run("UPDATE certificates SET owner_name = 'Someone Else' WHERE id = 1")
     assert ">NOT VERIFIED<" in status_of(app_client, "CERT-0001")[1]
 
 
@@ -293,6 +288,7 @@ def test_production_creates_no_account_without_its_password(monkeypatch):
     import app1
     importlib.reload(app1)
     assert q("SELECT username FROM users") == [("lab1",)]
+    monkeypatch.delenv("APP_ENV")
     drop_db()
 
 
@@ -303,3 +299,16 @@ def test_login_never_redirects_to_another_website(app_client):
         assert r.headers["Location"].endswith("/dashboard")
     r = app_client.post("/login?next=/reminders", data={"username": "lab1", "password": PW})
     assert r.headers["Location"].endswith("/reminders")
+
+
+def test_huge_certificate_number_is_not_found_not_a_crash(app_client):
+    """A number too big for the database column must read NOT FOUND, not error 500."""
+    r = app_client.get("/verify/CERT-99999999999")
+    assert r.status_code == 200 and "NOT FOUND" in r.get_data(as_text=True)
+
+
+def test_upgrade_accepts_a_database_made_before_migrations(app_client):
+    """Teammates' laptops have an old certificates.db; upgrading it must not fail."""
+    db.run("DROP TABLE alembic_version")
+    db.upgrade_to_latest()
+    assert q("SELECT version_num FROM alembic_version") == [("0001",)]
