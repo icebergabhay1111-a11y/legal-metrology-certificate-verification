@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{% endblock %} | Sahi Daam (prototype)</title>
+  <meta name="description" content="Check whether a weighing or measuring instrument has a valid verification certificate. Student prototype, not an official Government website.">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  <script src="{{ url_for('static', filename='js/a11y.js') }}" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to main content</a>
+
+<div class="util">
+  <div class="wrap">
+    <span><strong>Student prototype</strong> · Smart India Hackathon 2026 · Not an official Government of India website</span>
+    <div class="grp" id="a11y-tools" role="group" aria-label="Accessibility tools" hidden>
+      <button type="button" data-fs="sm" aria-label="Smaller text">A-</button>
+      <button type="button" data-fs="" aria-label="Normal text size">A</button>
+      <button type="button" data-fs="lg" aria-label="Larger text">A+</button>
+      <button type="button" id="hc" aria-pressed="false">High contrast</button>
+    </div>
+  </div>
+</div>
+
+<header class="hdr">
+  <div class="wrap">
+    <a class="brand" href="{{ url_for('home') }}">
+      <svg class="logo" viewBox="0 0 48 48" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+        <path d="M24 6v34M14 40h20M8 14h32M12 14l-6 13h12zM36 14l-6 13h12z"/><circle cx="24" cy="8" r="2" fill="currentColor"/>
+      </svg>
+      <span><b>Sahi Daam</b><small>Legal Metrology certificate verification</small></span>
+    </a>
+    {% if me %}
+    <div class="who">{{ me.full_name }}<br><small>{{ me.role.replace('_', ' ') }}</small> · <a href="{{ url_for('auth.logout') }}">Log out</a></div>
+    {% endif %}
+  </div>
+</header>
+
+<nav class="nav" aria-label="Main">
+  <div class="wrap"><ul>
+    <li><a href="{{ url_for('home') }}" {% if active == 'home' %}aria-current="page"{% endif %}>Verify a certificate</a></li>
+    {% if me and me.role in ('lab_officer', 'district_officer', 'admin') %}
+    <li><a href="{{ url_for('auth.dashboard') }}" {% if active == 'dashboard' %}aria-current="page"{% endif %}>Dashboard</a></li>
+    <li><a href="{{ url_for('issue') }}" {% if active == 'issue' %}aria-current="page"{% endif %}>Issue certificate</a></li>
+    <li><a href="{{ url_for('reminders') }}" {% if active == 'reminders' %}aria-current="page"{% endif %}>Re-verification due</a></li>
+    {% if me.role == 'admin' %}<li><a href="{{ url_for('auth.audit_log') }}" {% if active == 'audit' %}aria-current="page"{% endif %}>Audit log</a></li>{% endif %}
+    {% else %}
+    <li><a href="{{ url_for('auth.report') }}" {% if active == 'report' %}aria-current="page"{% endif %}>Report a problem</a></li>
+    <li><a href="{{ url_for('info', page='help') }}" {% if active == 'help' %}aria-current="page"{% endif %}>Help and contacts</a></li>
+    {% if not me %}<li><a href="{{ url_for('auth.login') }}" {% if active == 'login' %}aria-current="page"{% endif %}>Officer login</a></li>{% endif %}
+    {% endif %}
+  </ul></div>
+</nav>
+
+{% block hero %}{% endblock %}
+<main id="main" tabindex="-1"><div class="wrap">
+  {% block content %}{% endblock %}
+</div></main>
+
+<footer>
+  <div class="wrap">
+    <ul>
+      <li><a href="{{ url_for('info', page='help') }}">Help and contacts</a></li>
+      <li><a href="{{ url_for('info', page='accessibility') }}">Accessibility statement</a></li>
+      <li><a href="{{ url_for('info', page='privacy') }}">Privacy</a></li>
+      <li><a href="{{ url_for('info', page='terms') }}">Terms of use</a></li>
+      <li><a href="https://github.com/icebergabhay1111-a11y/legal-metrology-certificate-verification">Source code</a></li>
+    </ul>
+    <p>Sahi Daam is a student prototype built by Team VITV SahiDaam for Smart India Hackathon 2026 (problem statement SIH26036). It is not operated by, or affiliated with, any Government department.</p>
+    <p>All dates are Indian Standard Time.</p>
+  </div>
+</footer>
+</body>
+</html>

@@ -82,8 +82,8 @@ def issue(c, serial="WB-4471", itype="Weighbridge", days_ago=0,
 
 def status_of(c, code):
     body = c.get(f"/verify/{code}").data.decode()
-    m = re.search(r'class="status \w+">(.*?)</div>', body, re.S)
-    return (m.group(1).strip() if m else "NONE"), body
+    m = re.search(r'data-status="([^"]+)"', body)
+    return (m.group(1) if m else "NONE"), body
 
 
 # ---------------------------------------------------------------- accounts
@@ -181,7 +181,9 @@ def test_future_verification_date_is_refused(app_client):
 
 def test_there_is_no_expiry_field_on_the_form(app_client):
     """A typed expiry can contradict the period. The field must not exist."""
-    assert b'name="expiry_date"' not in app_client.get("/").data
+    login(app_client)
+    page = app_client.get("/issue").data
+    assert b'name="verification_date"' in page and b'name="expiry_date"' not in page
 
 
 # ---------------------------------------------------------------- signature
@@ -320,3 +322,54 @@ def test_today_is_india_date_even_on_a_utc_server():
     from datetime import datetime, timedelta, timezone
     india_now = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
     assert clock.today() == india_now.date()
+
+
+# ---------------------------------------------------------------- public pages and honesty
+def test_every_page_says_it_is_a_prototype_not_a_government_site(app_client):
+    """The site must never pass itself off as a Government of India service."""
+    for path in ("/", "/report", "/login", "/info/help", "/verify/CERT-0001"):
+        body = app_client.get(path).get_data(as_text=True)
+        assert "Not an official Government of India website" in body, path
+        assert "Emblem" not in body and "Content owned by" not in body, path
+
+
+def test_home_search_goes_to_the_certificate_page(app_client):
+    r = app_client.get("/verify?code=cert-0001")
+    assert r.status_code == 302 and r.headers["Location"].endswith("/verify/CERT-0001")
+    assert app_client.get("/verify?code=").status_code == 400
+
+
+def test_issue_form_is_for_officers_only(app_client):
+    assert app_client.get("/issue").status_code == 302
+    login(app_client, "trader1")
+    assert app_client.get("/issue").status_code == 403
+
+
+def test_tampered_record_shows_not_verified_at_the_top(app_client):
+    """A green VALID banner over an altered record would mislead a buyer."""
+    login(app_client); issue(app_client)
+    db.run("UPDATE certificates SET owner_name = 'Someone Else' WHERE id = 1")
+    assert status_of(app_client, "CERT-0001")[0] == "NOT VERIFIED"
+
+
+def test_status_page_never_claims_holders_are_reminded(app_client):
+    """Reminder delivery is not built. The page must not say it is."""
+    login(app_client); issue(app_client, days_ago=330)
+    status, body = status_of(app_client, "CERT-0001")
+    assert status == "EXPIRING SOON"
+    assert "reminded" not in body.lower()
+
+
+def test_due_soon_window_comes_from_the_state():
+    """Mizoram's window is 90 days and Tamil Nadu's 60: 80 days left differs."""
+    import certs
+    today = clock.today()
+    in_80_days = today + datetime.timedelta(days=80)
+    assert certs.status_on(in_80_days, "MZ", today) == ("EXPIRING SOON", 80)
+    assert certs.status_on(in_80_days, "TN", today) == ("VALID", 80)
+
+
+def test_help_and_policy_pages_exist(app_client):
+    for page in ("help", "accessibility", "privacy", "terms"):
+        assert app_client.get(f"/info/{page}").status_code == 200, page
+    assert app_client.get("/info/nothing").status_code == 404

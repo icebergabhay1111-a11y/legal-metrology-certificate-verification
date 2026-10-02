@@ -1,194 +1,34 @@
-<!DOCTYPE html>
-<html>
-
-<head>
-
-    <title>Instrument Verification Certificate</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-
-    <style>
-
-        body {
-            background: #f2f2f2;
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 20px;
-        }
-
-        .certificate {
-            max-width: 900px;
-            margin: 20px auto;
-            padding: 50px;
-            background: white;
-            border: 6px solid #222;
-            box-sizing: border-box;
-        }
-
-        h1 {
-            text-align: center;
-            font-size: 34px;
-            margin-bottom: 5px;
-        }
-
-        .subtitle {
-            text-align: center;
-            font-size: 19px;
-            color: #555;
-            margin-bottom: 34px;
-        }
-
-        .certificate-id {
-            text-align: center;
-            font-size: 26px;
-            font-weight: bold;
-            margin-bottom: 34px;
-        }
-
-        .details {
-            width: 88%;
-            margin: auto;
-        }
-
-        .row {
-            font-size: 20px;
-            padding: 16px 10px;
-            border-bottom: 1px solid #ddd;
-        }
-
-        .label {
-            font-weight: bold;
-            display: inline-block;
-            min-width: 320px;
-        }
-
-        .status {
-            text-align: center;
-            color: #12621f;
-            font-size: 26px;
-            font-weight: bold;
-            margin-top: 28px;
-        }
-
-        .qr-section {
-            text-align: center;
-            margin-top: 25px;
-        }
-
-        .qr-section img {
-            width: 180px;
-            height: 180px;
-        }
-
-        .qr-section p {
-            font-size: 15px;
-            color: #555;
-            margin-top: 8px;
-        }
-
-        .qr-section code {
-            font-size: 13px;
-            color: #444;
-            word-break: break-all;
-        }
-
-        .note {
-            margin: 26px auto 0 auto;
-            width: 88%;
-            padding-top: 14px;
-            border-top: 1px solid #ddd;
-            font-size: 13px;
-            color: #666;
-            line-height: 1.5;
-        }
-
-    </style>
-
-</head>
-
-
-<body>
-
-    <div class="certificate">
-
-        <h1>INSTRUMENT VERIFICATION CERTIFICATE</h1>
-
-        <div class="subtitle">
-            Legal Metrology Verification Record
-        </div>
-
-        <div class="certificate-id">
-            Certificate ID: {{ certificate_id }}
-        </div>
-
-        <div class="details">
-
-            <div class="row">
-                <span class="label">Serial number</span>
-                {{ serial_number }}
-            </div>
-
-            <div class="row">
-                <span class="label">Owner name</span>
-                {{ owner_name }}
-            </div>
-
-            <div class="row">
-                <span class="label">Issuing officer</span>
-                {{ officer_name }}
-            </div>
-
-            <div class="row">
-                <span class="label">Instrument type</span>
-                {{ instrument_type }}
-            </div>
-
-            <div class="row">
-                <span class="label">Class of instrument</span>
-                {{ instrument_class or "Not recorded" }}
-            </div>
-
-            <div class="row">
-                <span class="label">Maximum permissible error</span>
-                {{ max_permissible_error or "Not recorded" }}
-            </div>
-
-            <div class="row">
-                <span class="label">Verification date</span>
-                {{ verification_date }}
-            </div>
-
-            <div class="row">
-                <span class="label">Re-verification period</span>
-                {{ reverification_months }} months
-            </div>
-
-            <div class="row">
-                <span class="label">Expiry date</span>
-                {{ expiry_date }}
-            </div>
-
-        </div>
-
-        <div class="status">
-            VERIFIED AND STAMPED
-        </div>
-
-        <div class="qr-section">
-
-            <img src="{{ qr_code }}" alt="Certificate QR code">
-
-            <p>Scan to check this certificate's status on the day of scanning</p>
-
-            <code>{{ verification_url }}</code>
-
-        </div>
-
-        <div class="note">
-            {{ period_note }}
-        </div>
-
+{% extends "base.html" %}
+{% set active = 'issue' %}
+{% block title %}{{ certificate_id }} issued{% endblock %}
+{% block content %}
+<p class="success no-print" role="status">Certificate {{ certificate_id }} has been issued and signed.</p>
+<article class="panel" aria-labelledby="h-cert">
+  <h2 id="h-cert">Verification certificate · {{ certificate_id }}</h2>
+  <div class="body layout">
+    <dl class="facts">
+      <dt>Certificate ID</dt><dd>{{ certificate_id }}</dd>
+      <dt>Serial number</dt><dd>{{ serial_number }}</dd>
+      <dt>Owner</dt><dd>{{ owner_name }}</dd>
+      <dt>Instrument type</dt><dd>{{ instrument_type }}</dd>
+      <dt>Class of instrument</dt><dd>{{ instrument_class or 'Not recorded' }}</dd>
+      <dt>Maximum permissible error</dt><dd>{{ max_permissible_error or 'Not recorded' }}</dd>
+      <dt>Issuing officer</dt><dd>{{ officer_name }}</dd>
+      <dt>Verified on</dt><dd>{{ verification_date }}</dd>
+      <dt>Re-verification period</dt><dd>{{ reverification_months }} months</dd>
+      <dt>Expires on</dt><dd>{{ expiry_date }}</dd>
+    </dl>
+    <div style="text-align:center">
+      <img src="{{ qr_code }}" alt="QR code linking to the live status of {{ certificate_id }}" width="200" height="200">
+      <p class="src">Scan to see the status on the day you scan.</p>
+      <p class="src" style="word-break:break-all">{{ verification_url }}</p>
     </div>
-
-</body>
-
-</html>
+  </div>
+</article>
+<p class="note">Issued in the Sahi Daam student prototype. This is a record for demonstration, not a legal certificate under the Legal Metrology Act, 2009. {{ period_note }}</p>
+<div class="actions no-print">
+  <button class="btn" type="button" onclick="window.print()">Print certificate</button>
+  <a class="btn alt" href="{{ url_for('issue') }}">Issue another</a>
+  <a class="btn alt" href="{{ url_for('verify', certificate_id=certificate_id) }}">Open its status page</a>
+</div>
+{% endblock %}

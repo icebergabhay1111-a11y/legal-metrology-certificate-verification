@@ -86,6 +86,11 @@ def reminder_days(state_code):
     return int(state(state_code).get("reminder_window_days", 60))
 
 
+def reminder_windows():
+    """[(State name, days)] - each State's 'due soon' window, for display."""
+    return sorted((s.get("state_name", c), reminder_days(c)) for c, s in STATES.items())
+
+
 def daily_limit(state_code):
     return int(state(state_code).get("daily_issue_limit", 40))
 

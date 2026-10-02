@@ -1,230 +1,91 @@
-<!DOCTYPE html>
-<html>
+{% extends "base.html" %}
+{% set active = 'home' %}
+{% block title %}{{ certificate.code if certificate else 'Certificate' }} status{% endblock %}
+{% block content %}
+<p class="crumbs"><a href="{{ url_for('home') }}">Verify a certificate</a> › Result</p>
+<h1 class="title">Certificate status</h1>
+<p class="sub">Status as on {{ checked_on }}. Worked out today from the expiry date, not stored.</p>
 
-<head>
-    <title>Certificate Status</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+{% set shown = 'NOT VERIFIED' if certificate and not signature_ok else status %}
+{% if shown == 'NOT VERIFIED' %}
+<div class="status bad" role="alert" data-status="NOT VERIFIED"><span class="ico" aria-hidden="true">✕</span><div>
+  <strong>NOT VERIFIED</strong>
+  <p>This record was not signed, or a field was changed after it was issued. Do not rely on the details below. Report it using the link at the bottom of this page.</p></div></div>
+{% elif shown == 'EXPIRED' %}
+<div class="status bad" role="alert" data-status="EXPIRED"><span class="ico" aria-hidden="true">✕</span><div>
+  <strong>EXPIRED</strong>
+  <p>Expired {{ days }} day{{ '' if days == 1 else 's' }} ago. This instrument must not be used in trade until it is re-verified.</p></div></div>
+{% elif shown == 'EXPIRING SOON' %}
+<div class="status warn" role="status" data-status="EXPIRING SOON"><span class="ico" aria-hidden="true">!</span><div>
+  <strong>EXPIRING SOON</strong>
+  <p>Valid for {{ days }} more day{{ '' if days == 1 else 's' }}. It appears on the officers' re-verification list {{ reminder_window }} days before expiry.</p></div></div>
+{% elif shown == 'VALID' %}
+<div class="status ok" role="status" data-status="VALID"><span class="ico" aria-hidden="true">✓</span><div>
+  <strong>VALID</strong>
+  <p>Valid for a further {{ days }} day{{ '' if days == 1 else 's' }}, until {{ certificate.expires_on }}.</p></div></div>
+{% else %}
+<div class="status none" role="alert" data-status="NOT FOUND"><span class="ico" aria-hidden="true">?</span><div>
+  <strong>NOT FOUND</strong>
+  <p>No certificate with this ID exists in this system. Check the ID. If the certificate looks genuine, it may be forged: please report it.</p></div></div>
+{% endif %}
 
-    <style>
-
-        body {
-            background: #f2f2f2;
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 40px 16px;
-        }
-
-        .verification-box {
-            max-width: 700px;
-            margin: auto;
-            padding: 40px;
-            background: white;
-            border: 5px solid #222;
-            box-sizing: border-box;
-        }
-
-        h1 {
-            text-align: center;
-            margin-bottom: 4px;
-            font-size: 28px;
-        }
-
-        .checked-on {
-            text-align: center;
-            color: #666;
-            font-size: 15px;
-            margin-bottom: 25px;
-        }
-
-        .status {
-            text-align: center;
-            font-size: 34px;
-            font-weight: bold;
-            margin: 20px 0 6px 0;
-            padding: 18px 10px;
-            border: 3px solid;
-        }
-
-        .status-sub {
-            text-align: center;
-            font-size: 17px;
-            margin-bottom: 22px;
-        }
-
-        .valid          { color: #12621f; border-color: #12621f; background: #eaf6ec; }
-        .expiring       { color: #8a5a00; border-color: #8a5a00; background: #fdf3e0; }
-        .expired        { color: #a11414; border-color: #a11414; background: #fdeaea; }
-        .notfound       { color: #444;    border-color: #444;    background: #f0f0f0; }
-
-        .row {
-            font-size: 18px;
-            padding: 12px 4px;
-            border-bottom: 1px solid #ddd;
-        }
-
-        .label {
-            font-weight: bold;
-            display: inline-block;
-            min-width: 250px;
-        }
-
-        .message {
-            text-align: center;
-            font-size: 16px;
-            margin-top: 22px;
-            color: #444;
-        }
-
-        .note {
-            margin-top: 22px;
-            padding-top: 14px;
-            border-top: 1px solid #ddd;
-            font-size: 13px;
-            color: #666;
-            line-height: 1.5;
-        }
-
-
-        .enforcement {
-            margin-top: 22px;
-            border: 2px solid #a11414;
-            background: #fdeaea;
-            padding: 16px 18px;
-        }
-        .enf-title {
-            font-weight: bold; color: #a11414; font-size: 16px;
-            margin-bottom: 8px; text-transform: uppercase; letter-spacing: .5px;
-        }
-        .enf-row { font-size: 15px; line-height: 1.5; margin-bottom: 6px; }
-        .enf-src { font-size: 12px; color: #666; margin-top: 8px; font-style: italic; }
-    </style>
-
-</head>
-
-<body>
-
-    <div class="verification-box">
-
-        <h1>Certificate Status</h1>
-
-        <div class="checked-on">
-            Status as on {{ checked_on }}
+{% if certificate %}
+<div class="layout">
+  <div>
+    <section class="panel" aria-labelledby="h-det">
+      <h2 id="h-det">Certificate details</h2>
+      <div class="body">
+        <dl class="facts">
+          <dt>Certificate ID</dt><dd>{{ certificate.code }}</dd>
+          <dt>Serial number</dt><dd>{{ certificate.serial_number }}</dd>
+          <dt>Owner</dt><dd>{{ certificate.owner_name }}</dd>
+          <dt>Instrument type</dt><dd>{{ certificate.instrument_type }}</dd>
+          <dt>Class of instrument</dt><dd>{% if certificate.instrument_class != 'Not recorded' %}{{ certificate.instrument_class }}{% else %}<span class="na">Not recorded</span>{% endif %}</dd>
+          <dt>Maximum permissible error</dt><dd>{% if certificate.max_permissible_error != 'Not recorded' %}{{ certificate.max_permissible_error }}{% else %}<span class="na">Not recorded</span>{% endif %}</dd>
+          <dt>Issuing officer</dt><dd>{{ certificate.officer_name }}</dd>
+          <dt>Verified on</dt><dd>{{ certificate.verified_on }}</dd>
+          <dt>Expires on</dt><dd>{{ certificate.expires_on }}{% if certificate.reverification_months %} ({{ certificate.reverification_months }}-month period){% endif %}</dd>
+          <dt>Digital signature</dt>
+          <dd>{% if signature_ok %}<span class="badge ok">✓ <strong>VERIFIED</strong></span> Signed by the issuing system; no field has been altered since issue.
+              {% else %}<span class="badge bad">✕ <strong>NOT VERIFIED</strong></span> Not signed, or altered since issue.{% endif %}</dd>
+        </dl>
+      </div>
+    </section>
+  </div>
+  <div>
+    {% if signature_ok and timeline %}
+    <section class="panel" aria-labelledby="h-time">
+      <h2 id="h-time">Validity period</h2>
+      <div class="body">
+        <p style="margin:0">{{ timeline.pct }}% of the period has passed.</p>
+        <div class="timeline">
+          <div class="track {{ timeline.tone }}" role="img" aria-label="{{ timeline.pct }} percent of the validity period has passed">
+            <div class="fill" style="width:{{ timeline.pct }}%"></div>
+          </div>
+          <div class="ends"><span>Verified<br>{{ certificate.verified_on }}</span><span style="text-align:right">Expires<br>{{ certificate.expires_on }}</span></div>
         </div>
+      </div>
+    </section>
+    {% endif %}
+    {% if enforcement %}
+    <aside class="legal" aria-labelledby="h-law">
+      <h2 id="h-law">What the law says</h2>
+      <p><strong>Section {{ enforcement.section }}, Legal Metrology Act, 2009.</strong></p>
+      <p>{{ enforcement.penalty }}</p>
+      <p><strong>{{ 'Compoundable' if enforcement.compoundable else 'Not compoundable' }}.</strong> {{ enforcement.compounding_basis }}</p>
+      <p><strong>Officer's next step:</strong> {{ enforcement.officer_next_step }}</p>
+      <p class="src">Source: {{ enforcement.source }}.</p>
+    </aside>
+    {% endif %}
+  </div>
+</div>
+<p class="note">{{ period_note }}</p>
+{% endif %}
 
-        {% if status == "VALID" %}
-            <div class="status valid">VALID</div>
-            <div class="status-sub">
-                Valid for a further {{ days }} day{{ '' if days == 1 else 's' }}.
-            </div>
-
-        {% elif status == "EXPIRING SOON" %}
-            <div class="status expiring">EXPIRING SOON</div>
-            <div class="status-sub">
-                Expires in {{ days }} day{{ '' if days == 1 else 's' }}.
-                The holder is reminded {{ reminder_window }} days before expiry.
-            </div>
-
-        {% elif status == "EXPIRED" %}
-            <div class="status expired">EXPIRED</div>
-            <div class="status-sub">
-                Expired {{ days }} day{{ '' if days == 1 else 's' }} ago.
-                This instrument must not be used in trade until it is re-verified.
-            </div>
-
-        {% else %}
-            <div class="status notfound">NOT FOUND</div>
-            <div class="status-sub">
-                No certificate with this identifier exists in the verification database.
-            </div>
-        {% endif %}
-
-
-        {% if certificate %}
-
-            <div class="row">
-                <span class="label">Certificate ID</span>
-                {{ certificate.code }}
-            </div>
-
-            <div class="row">
-                <span class="label">Serial number</span>
-                {{ certificate.serial_number }}
-            </div>
-
-            <div class="row">
-                <span class="label">Owner</span>
-                {{ certificate.owner_name }}
-            </div>
-
-            <div class="row">
-                <span class="label">Issuing officer</span>
-                {{ certificate.officer_name }}
-            </div>
-
-            <div class="row">
-                <span class="label">Instrument type</span>
-                {{ certificate.instrument_type }}
-            </div>
-
-            <div class="row">
-                <span class="label">Class of instrument</span>
-                {{ certificate.instrument_class }}
-            </div>
-
-            <div class="row">
-                <span class="label">Maximum permissible error</span>
-                {{ certificate.max_permissible_error }}
-            </div>
-
-            <div class="row">
-                <span class="label">Verified on</span>
-                {{ certificate.verified_on }}
-            </div>
-
-            <div class="row">
-                <span class="label">Expires on</span>
-                {{ certificate.expires_on }}
-                {% if certificate.reverification_months %}
-                    ({{ certificate.reverification_months }}-month period)
-                {% endif %}
-            </div>
-
-            <div class="row">
-                <span class="label">Digital signature</span>
-                {% if signature_ok %}
-                    <b style="color:#12621f">VERIFIED</b>
-                    &mdash; signed by the issuing system; no field has been altered
-                {% else %}
-                    <b style="color:#a11414">NOT VERIFIED</b>
-                    &mdash; this certificate was not signed, or a field has been altered since issue
-                {% endif %}
-            </div>
-
-            {% if enforcement %}
-            <div class="enforcement">
-                <div class="enf-title">What the law says about this</div>
-                <div class="enf-row"><b>Section {{ enforcement.section }}</b>,
-                    Legal Metrology Act, 2009</div>
-                <div class="enf-row">{{ enforcement.penalty }}</div>
-                <div class="enf-row">
-                    <b>{% if enforcement.compoundable %}Compoundable{% else %}
-                    Not compoundable{% endif %}.</b>
-                    {{ enforcement.compounding_basis }}
-                </div>
-                <div class="enf-row"><b>Officer's next step:</b>
-                    {{ enforcement.officer_next_step }}</div>
-                <div class="enf-src">{{ enforcement.source }}</div>
-            </div>
-            {% endif %}
-
-            <div class="note">
-                {{ period_note }}
-            </div>
-
-        {% endif %}
-
-    </div>
-
-</body>
-
-</html>
+<div class="actions no-print">
+  <a class="btn" href="{{ url_for('home') }}">Check another certificate</a>
+  <a class="btn alt" href="{{ url_for('auth.report') }}">Report a problem</a>
+  {% if certificate %}<button class="btn alt" type="button" onclick="window.print()">Print this result</button>{% endif %}
+</div>
+<p class="src">Need help? National Consumer Helpline: <strong>1915</strong> (toll-free, 8 a.m. to 8 p.m.). <a href="{{ url_for('info', page='help') }}">More contacts</a></p>
+{% endblock %}

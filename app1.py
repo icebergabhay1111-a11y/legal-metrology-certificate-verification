@@ -28,8 +28,8 @@ DEPLOY
 """
 
 import clock
-from flask import Flask, render_template, request
-from datetime import date, datetime, timedelta
+from flask import Flask, abort, redirect, render_template, request, url_for
+from datetime import date, datetime
 import os
 import io
 import base64
@@ -51,6 +51,7 @@ if IS_PRODUCTION and not os.environ.get("SECRET_KEY"):
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 
 import db              # the only file that talks to the database
+import certs           # status rules shared by every page
 import auth
 import config          # per-State settings + Shreyash's enforcement.json
 import signing         # Ed25519 signature on every certificate
@@ -117,8 +118,7 @@ PERIOD_SOURCE_NOTE = config.PERIOD_NOTE
 # Kept only so old code + tests that still import it keep working.
 REVERIFICATION_MONTHS = config.DEFAULT_MONTHS
 
-# Default reminder window if a State file doesn't set one.
-REMINDER_WINDOW_DAYS = int(os.environ.get("REMINDER_WINDOW_DAYS", 60))
+# Each State sets its own 'due soon' window in states/XX.json - see certs.py.
 
 
 def add_months(start, months):
@@ -172,9 +172,42 @@ def qr_data_uri(text):
 # HOME PAGE
 # ============================================================
 
+@app.context_processor
+def page_globals():
+    """Every template gets the logged-in user (or None) as `me`."""
+    return {"me": current_user()}
+
+
 @app.route("/")
 def home():
+    """Public home: the certificate search."""
+    return render_template("home.html")
 
+
+@app.route("/verify")
+def verify_search():
+    """The home page form sends ?code=...; go to that certificate's page."""
+    code = request.args.get("code", "").strip().upper()
+    if not code:
+        return render_template("home.html", error="Enter a certificate ID, for example CERT-0001."), 400
+    return redirect(url_for("verify", certificate_id=code))
+
+
+INFO_PAGES = ("help", "accessibility", "privacy", "terms")
+
+
+@app.route("/info/<page>")
+def info(page):
+    """Help, accessibility statement, privacy and terms pages."""
+    if page not in INFO_PAGES:
+        abort(404)
+    return render_template(f"info_{page}.html", active=page)
+
+
+@app.route("/issue")
+@role_required("lab_officer", "district_officer", "admin")
+def issue():
+    """Officer form for issuing a certificate."""
     user = current_user()
     state_code = (user or {}).get("state_code") or config.DEFAULT_STATE
 
@@ -483,28 +516,11 @@ def verify(certificate_id):
     # STATUS ON THE DAY OF SCANNING
     # --------------------------------------------------------
 
-    expiry_date = parse_date(row[5])
-
+    expiry_date = certs.parse_date(row[5])
     if expiry_date is None:
-
-        status = "UNREADABLE EXPIRY DATE"
-        days = None
-
-    elif expiry_date < today:
-
-        status = "EXPIRED"
-        days = (today - expiry_date).days
-
-    elif (expiry_date - today).days <= REMINDER_WINDOW_DAYS:
-
-        status = "EXPIRING SOON"
-        days = (expiry_date - today).days
-
+        status, days = "UNREADABLE EXPIRY DATE", None
     else:
-
-        status = "VALID"
-        days = (expiry_date - today).days
-
+        status, days = certs.status_on(expiry_date, row[11], today)
 
     certificate = {
         "code":            f"CERT-{row[0]:04d}",
@@ -546,8 +562,20 @@ def verify(certificate_id):
         reminder_window=config.reminder_days(certificate.get("state_code")),
         period_note=PERIOD_SOURCE_NOTE,
         signature_ok=signature_ok,
-        enforcement=enforcement
+        enforcement=enforcement,
+        timeline=validity_timeline(row[4], row[5], today, status),
     )
+
+
+def validity_timeline(verified_text, expiry_text, today, status):
+    """How much of the validity period has passed, for the progress bar."""
+    start, end = certs.parse_date(verified_text), certs.parse_date(expiry_text)
+    if start is None or end is None or end <= start:
+        return None
+    pct = round(100 * (today - start).days / (end - start).days)
+    pct = max(0, min(100, pct))
+    tone = {"EXPIRED": "bad", "EXPIRING SOON": "warn"}.get(status, "")
+    return {"pct": pct, "tone": tone}
 
 
 # ============================================================
@@ -562,47 +590,14 @@ def verify(certificate_id):
 @role_required("lab_officer", "district_officer", "admin")
 def reminders():
 
-    today = clock.today()
-
-    cutoff = today + timedelta(days=REMINDER_WINDOW_DAYS)
-
-    rows = db.fetch_all("""
-        SELECT id, serial_number, owner_name, instrument_type, expiry_date
-        FROM certificates
-        ORDER BY expiry_date ASC
-    """)
-
-    due = []
-    expired = []
-
-    for row in rows:
-
-        expiry_date = parse_date(row[4])
-
-        if expiry_date is None:
-            continue
-
-        item = {
-            "code":            f"CERT-{row[0]:04d}",
-            "serial_number":   row[1],
-            "owner_name":      row[2],
-            "instrument_type": row[3],
-            "expires_on":      row[4],
-            "days":            (expiry_date - today).days,
-        }
-
-        if expiry_date < today:
-            expired.append(item)
-
-        elif expiry_date <= cutoff:
-            due.append(item)
+    due, expired = certs.due_and_expired()
 
     return render_template(
         "reminders.html",
         due=due,
         expired=expired,
-        today=today.isoformat(),
-        reminder_window=REMINDER_WINDOW_DAYS
+        today=clock.today().isoformat(),
+        windows=config.reminder_windows(),
     )
 
 

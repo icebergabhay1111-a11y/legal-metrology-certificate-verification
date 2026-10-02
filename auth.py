@@ -15,7 +15,7 @@ full, ready to paste, in INTEGRATION.md next to this file.
 import clock
 import functools
 import os
-from datetime import datetime, timedelta
+
 
 from flask import (
     Blueprint, g, redirect, render_template,
@@ -24,6 +24,7 @@ from flask import (
 from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.security import check_password_hash, generate_password_hash
 
+import certs
 import db
 
 
@@ -247,30 +248,7 @@ def report():
 @auth_bp.route("/dashboard")
 @role_required("lab_officer", "district_officer", "admin")
 def dashboard():
-    today = clock.today()
-    cutoff = today + timedelta(days=60)
-
-    cert_rows = db.fetch_all("""
-        SELECT id, serial_number, owner_name, instrument_type, expiry_date
-        FROM certificates
-        ORDER BY expiry_date ASC
-    """)
-
-    due, expired = [], []
-
-    for row in cert_rows:
-        try:
-            expiry = datetime.strptime(row.expiry_date, "%Y-%m-%d").date()
-        except (ValueError, TypeError):
-            continue
-
-        item = dict(row._mapping)
-        item["days"] = (expiry - today).days
-
-        if expiry < today:
-            expired.append(item)
-        elif expiry <= cutoff:
-            due.append(item)
+    due, expired = certs.due_and_expired()
 
     reports = db.fetch_all("""
         SELECT id, at, serial_number, description, status
@@ -291,6 +269,7 @@ def dashboard():
 
     return render_template(
         "dashboard.html",
+        today=clock.today().isoformat(),
         due=due,
         expired=expired,
         reports=reports,

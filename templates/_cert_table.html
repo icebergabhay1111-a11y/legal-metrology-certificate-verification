@@ -1,0 +1,18 @@
+{# One table for certificate lists. rows: items from certs.due_and_expired(). mode: 'due' or 'expired'. #}
+<div class="tbl"><table>
+  <caption class="visually-hidden">{{ caption }}</caption>
+  <thead><tr>
+    <th scope="col">Certificate</th><th scope="col">Serial number</th><th scope="col">Owner</th>
+    <th scope="col">Instrument</th><th scope="col">State</th>
+    <th scope="col">{{ 'Expired on' if mode == 'expired' else 'Expires on' }}</th>
+    <th scope="col">{{ 'Days overdue' if mode == 'expired' else 'Days left' }}</th>
+  </tr></thead>
+  <tbody>
+  {% for c in rows %}<tr>
+    <th scope="row"><a href="{{ url_for('verify', certificate_id=c.code) }}">{{ c.code }}</a></th>
+    <td>{{ c.serial_number }}</td><td>{{ c.owner_name }}</td><td>{{ c.instrument_type }}</td>
+    <td>{{ c.state_code }}</td><td>{{ c.expires_on }}</td>
+    <td>{% if mode == 'expired' %}<span class="badge bad">✕ {{ c.days }}</span>{% else %}<span class="badge warn">! {{ c.days }}</span>{% endif %}</td>
+  </tr>{% endfor %}
+  </tbody>
+</table></div>
