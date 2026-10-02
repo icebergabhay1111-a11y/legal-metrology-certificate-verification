@@ -4,7 +4,7 @@
 {% block content %}
 <p class="crumbs"><a href="{{ url_for('auth.dashboard') }}">Dashboard</a> › Re-verification due</p>
 <h1 class="title">Certificates due for re-verification</h1>
-<p class="sub">Officer view as on {{ today }}. A certificate is listed here once it is inside its State's window:
+<p class="sub">Officer view as on {{ today|nice }}. A certificate is listed here once it is inside its State's window:
 {% for name, days in windows %}{{ name }} {{ days }} days{{ ', ' if not loop.last else '.' }}{% endfor %}
 Holders are not notified automatically yet.</p>
 

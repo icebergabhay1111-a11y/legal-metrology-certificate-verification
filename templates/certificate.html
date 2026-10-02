@@ -14,9 +14,9 @@
       <dt>Class of instrument</dt><dd>{{ instrument_class or 'Not recorded' }}</dd>
       <dt>Maximum permissible error</dt><dd>{{ max_permissible_error or 'Not recorded' }}</dd>
       <dt>Issuing officer</dt><dd>{{ officer_name }}</dd>
-      <dt>Verified on</dt><dd>{{ verification_date }}</dd>
+      <dt>Verified on</dt><dd>{{ verification_date|nice }}</dd>
       <dt>Re-verification period</dt><dd>{{ reverification_months }} months</dd>
-      <dt>Expires on</dt><dd>{{ expiry_date }}</dd>
+      <dt>Expires on</dt><dd>{{ expiry_date|nice }}</dd>
     </dl>
     <div style="text-align:center">
       <img src="{{ qr_code }}" alt="QR code linking to the live status of {{ certificate_id }}" width="200" height="200">

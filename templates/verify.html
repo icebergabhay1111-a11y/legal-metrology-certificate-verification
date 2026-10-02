@@ -4,7 +4,7 @@
 {% block content %}
 <p class="crumbs"><a href="{{ url_for('home') }}">Verify a certificate</a> › Result</p>
 <h1 class="title">Certificate status</h1>
-<p class="sub">Status as on {{ checked_on }}. Worked out today from the expiry date, not stored.</p>
+<p class="sub">Status as on {{ checked_on|nice }}. Worked out today from the expiry date, not stored.</p>
 
 {% set shown = 'NOT VERIFIED' if certificate and not signature_ok else status %}
 {% if shown == 'NOT VERIFIED' %}
@@ -22,7 +22,7 @@
 {% elif shown == 'VALID' %}
 <div class="status ok" role="status" data-status="VALID"><span class="ico" aria-hidden="true">✓</span><div>
   <strong>VALID</strong>
-  <p>Valid for a further {{ days }} day{{ '' if days == 1 else 's' }}, until {{ certificate.expires_on }}.</p></div></div>
+  <p>Valid for a further {{ days }} day{{ '' if days == 1 else 's' }}, until {{ certificate.expires_on|nice }}.</p></div></div>
 {% else %}
 <div class="status none" role="alert" data-status="NOT FOUND"><span class="ico" aria-hidden="true">?</span><div>
   <strong>NOT FOUND</strong>
@@ -43,8 +43,8 @@
           <dt>Class of instrument</dt><dd>{% if certificate.instrument_class != 'Not recorded' %}{{ certificate.instrument_class }}{% else %}<span class="na">Not recorded</span>{% endif %}</dd>
           <dt>Maximum permissible error</dt><dd>{% if certificate.max_permissible_error != 'Not recorded' %}{{ certificate.max_permissible_error }}{% else %}<span class="na">Not recorded</span>{% endif %}</dd>
           <dt>Issuing officer</dt><dd>{{ certificate.officer_name }}</dd>
-          <dt>Verified on</dt><dd>{{ certificate.verified_on }}</dd>
-          <dt>Expires on</dt><dd>{{ certificate.expires_on }}{% if certificate.reverification_months %} ({{ certificate.reverification_months }}-month period){% endif %}</dd>
+          <dt>Verified on</dt><dd>{{ certificate.verified_on|nice }}</dd>
+          <dt>Expires on</dt><dd>{{ certificate.expires_on|nice }}{% if certificate.reverification_months %} ({{ certificate.reverification_months }}-month period){% endif %}</dd>
           <dt>Digital signature</dt>
           <dd>{% if signature_ok %}<span class="badge ok">✓ <strong>VERIFIED</strong></span> Signed by the issuing system; no field has been altered since issue.
               {% else %}<span class="badge bad">✕ <strong>NOT VERIFIED</strong></span> Not signed, or altered since issue.{% endif %}</dd>
@@ -62,7 +62,7 @@
           <div class="track {{ timeline.tone }}" role="img" aria-label="{{ timeline.pct }} percent of the validity period has passed">
             <div class="fill" style="width:{{ timeline.pct }}%"></div>
           </div>
-          <div class="ends"><span>Verified<br>{{ certificate.verified_on }}</span><span style="text-align:right">Expires<br>{{ certificate.expires_on }}</span></div>
+          <div class="ends"><span>Verified<br>{{ certificate.verified_on|nice }}</span><span style="text-align:right">Expires<br>{{ certificate.expires_on|nice }}</span></div>
         </div>
       </div>
     </section>

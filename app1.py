@@ -172,6 +172,13 @@ def qr_data_uri(text):
 # HOME PAGE
 # ============================================================
 
+@app.template_filter("nice")
+def nice_date(value):
+    """'2026-08-28' -> '28 Aug 2026' for people; stored dates stay ISO."""
+    parsed = certs.parse_date(value)
+    return parsed.strftime("%d %b %Y") if parsed else value
+
+
 @app.context_processor
 def page_globals():
     """Every template gets the logged-in user (or None) as `me`."""

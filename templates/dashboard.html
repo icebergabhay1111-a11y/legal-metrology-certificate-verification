@@ -3,7 +3,7 @@
 {% block title %}Officer dashboard{% endblock %}
 {% block content %}
 <h1 class="title">Officer dashboard</h1>
-<p class="sub">{{ user.full_name }} · overview as on {{ today }}. What needs action is at the top.</p>
+<p class="sub">{{ user.full_name }} · overview as on {{ today|nice }}. What needs action is at the top.</p>
 
 <section class="tiles" aria-label="Summary">
   <a class="tile bad" href="#fraud"><span class="n">{{ fraud_alerts|length }}</span>Fraud alerts</a>
