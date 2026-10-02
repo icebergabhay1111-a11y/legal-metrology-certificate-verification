@@ -12,12 +12,13 @@ certificate at the moment of issue. That patch is written out in
 full, ready to paste, in INTEGRATION.md next to this file.
 """
 
+import clock
 import functools
 import os
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
 from flask import (
-    Blueprint, Response, g, redirect, render_template,
+    Blueprint, g, redirect, render_template,
     request, session, url_for,
 )
 from sqlalchemy.exc import SQLAlchemyError
@@ -108,7 +109,7 @@ def log(action, target="", detail=""):
     db.run(
         """INSERT INTO audit (at, actor_id, actor_name, action, target, detail)
            VALUES (:at, :actor_id, :actor_name, :action, :target, :detail)""",
-        at=datetime.now().strftime("%Y-%m-%d %H:%M"), actor_id=actor_id,
+        at=clock.stamp(), actor_id=actor_id,
         actor_name=actor_name, action=action, target=target, detail=detail,
     )
 
@@ -231,7 +232,7 @@ def report():
 
     db.run(
         "INSERT INTO reports (at, serial_number, description) VALUES (:at, :serial, :text)",
-        at=datetime.now().strftime("%Y-%m-%d %H:%M"), serial=serial_number, text=description,
+        at=clock.stamp(), serial=serial_number, text=description,
     )
 
     log("public report received", target=serial_number, detail=description[:200])
@@ -246,7 +247,7 @@ def report():
 @auth_bp.route("/dashboard")
 @role_required("lab_officer", "district_officer", "admin")
 def dashboard():
-    today = date.today()
+    today = clock.today()
     cutoff = today + timedelta(days=60)
 
     cert_rows = db.fetch_all("""

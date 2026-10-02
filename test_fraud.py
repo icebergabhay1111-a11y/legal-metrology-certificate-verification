@@ -8,11 +8,12 @@ Why both halves matter: a rule that fires on an innocent case is worse
 than no rule at all, bc it accuses the wrong person.
 """
 
-from datetime import date, timedelta
+from datetime import timedelta
 
+import clock
 import fraud
 
-TODAY = date.today()
+TODAY = clock.today()   # India's date, same as fraud.py
 
 
 def d(days):
