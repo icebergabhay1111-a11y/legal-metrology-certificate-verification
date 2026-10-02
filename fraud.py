@@ -19,7 +19,8 @@ An officer is a dict w/:
     approved_state, approved_categories (list)
 """
 
-from datetime import date, datetime
+import clock
+from datetime import datetime
 
 
 def _as_date(text):
@@ -42,7 +43,7 @@ def check_duplicate_serial(new_cert, existing_certs):
     """
     serial = (new_cert.get("serial_number") or "").strip().upper()
     owner = (new_cert.get("owner_name") or "").strip().lower()
-    today = date.today()
+    today = clock.today()
 
     for old in existing_certs:
         if old.get("code") == new_cert.get("code"):
@@ -122,7 +123,7 @@ def check_lapsed_reregistration(new_cert, existing_certs):
     serial = (new_cert.get("serial_number") or "").strip().upper()
     owner = (new_cert.get("owner_name") or "").strip().lower()
     new_verified = _as_date(new_cert.get("verified_on"))
-    today = date.today()
+    today = clock.today()
 
     for old in existing_certs:
         if old.get("code") == new_cert.get("code"):

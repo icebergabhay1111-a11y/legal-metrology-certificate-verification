@@ -15,10 +15,11 @@ import time
 
 import pytest
 
+import clock
 import db
 
 DB = "certificates.db"
-TODAY = datetime.date.today()
+TODAY = clock.today()   # India's date, same as the app
 PW = "sahidaam2026"
 
 
@@ -312,3 +313,10 @@ def test_upgrade_accepts_a_database_made_before_migrations(app_client):
     db.run("DROP TABLE alembic_version")
     db.upgrade_to_latest()
     assert q("SELECT version_num FROM alembic_version") == [("0001",)]
+
+
+def test_today_is_india_date_even_on_a_utc_server():
+    """Render runs on UTC; status must still use India's date."""
+    from datetime import datetime, timedelta, timezone
+    india_now = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    assert clock.today() == india_now.date()

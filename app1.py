@@ -27,6 +27,7 @@ DEPLOY
     getting wiped on Render free.
 """
 
+import clock
 from flask import Flask, render_template, request
 from datetime import date, datetime, timedelta
 import os
@@ -182,7 +183,7 @@ def home():
         instrument_types=config.instrument_types(state_code),
         states=config.state_choices(),
         selected_state=state_code,
-        today=date.today().isoformat(),
+        today=clock.today().isoformat(),
         period_note=PERIOD_SOURCE_NOTE
     )
 
@@ -247,7 +248,7 @@ def submit():
 
     # Can't verify an instrument tomorrow. Blocks back-dating tricks
     # and plain typos.
-    if verification_date > date.today():
+    if verification_date > clock.today():
         audit_log("certificate rejected", target=serial_number,
                   detail="verification date in the future")
         return "The verification date cannot be in the future", 400
@@ -350,7 +351,7 @@ def submit():
             conn.execute(db.text(
                 "INSERT INTO fraud_alerts (at, certificate_code, serial_number, "
                 "officer_name, reason) VALUES (:at, :code, :serial, :officer, :reason)"),
-                dict(at=datetime.now().strftime("%Y-%m-%d %H:%M"), code=certificate_code,
+                dict(at=clock.stamp(), code=certificate_code,
                      serial=serial_number, officer=officer["full_name"], reason=a))
 
     audit_log(
@@ -412,7 +413,7 @@ def submit():
 @app.route("/verify/<certificate_id>")
 def verify(certificate_id):
 
-    today = date.today()
+    today = clock.today()
 
     # --------------------------------------------------------
     # REMOVE CERT PREFIX
@@ -561,7 +562,7 @@ def verify(certificate_id):
 @role_required("lab_officer", "district_officer", "admin")
 def reminders():
 
-    today = date.today()
+    today = clock.today()
 
     cutoff = today + timedelta(days=REMINDER_WINDOW_DAYS)
 
