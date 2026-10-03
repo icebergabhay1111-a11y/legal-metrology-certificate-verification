@@ -1,0 +1,2 @@
+{# Problem message under a form field. name: the field. #}
+{% if problems.get(name) %}<p class="field-error" id="{{ name }}-error"><span class="code">{{ problems[name][0] }}</span> {{ problems[name][1] }}</p>{% endif %}

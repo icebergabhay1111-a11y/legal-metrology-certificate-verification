@@ -1,163 +1,98 @@
-<!DOCTYPE html>
-<html>
+{% extends "base.html" %}
+{% set active = 'issue' %}
+{% macro described(name, hint='') -%}
+{%- set ids = [] -%}
+{%- if hint %}{% set _ = ids.append(hint) %}{% endif -%}
+{%- if problems.get(name) %}{% set _ = ids.append(name ~ '-error') %}{% endif -%}
+{%- if ids %} aria-describedby="{{ ids|join(' ') }}"{% endif %}{% if problems.get(name) %} aria-invalid="true"{% endif -%}
+{%- endmacro %}
+{% block title %}Issue a certificate{% endblock %}
+{% block content %}
+<p class="crumbs"><a href="{{ url_for('auth.dashboard') }}">Dashboard</a> › Issue a certificate</p>
+<h1 class="title">Issue a verification certificate</h1>
+<p class="sub">Record an instrument you have verified. The system works out the expiry date from the instrument type and the State's rules; it cannot be typed in.</p>
 
-<head>
+{% if problems %}
+<div class="error" role="alert">
+  <p class="tight">Please correct {{ problems|length }} field{{ '' if problems|length == 1 else 's' }}:</p>
+  <ul>{% for name, p in problems.items() %}<li><a href="#{{ name }}">{{ p[1] }}</a></li>{% endfor %}</ul>
+</div>
+{% endif %}
 
-    <title>Instrument Verification Application</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-
-    <style>
-
-        body {
-            background: #f2f2f2;
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 40px 16px;
-        }
-
-        .box {
-            max-width: 640px;
-            margin: auto;
-            padding: 40px;
-            background: white;
-            border: 5px solid #222;
-            box-sizing: border-box;
-        }
-
-        h1 {
-            font-size: 26px;
-            margin-top: 0;
-            margin-bottom: 6px;
-        }
-
-        .lead {
-            color: #555;
-            font-size: 15px;
-            margin-bottom: 26px;
-        }
-
-        label {
-            display: block;
-            font-weight: bold;
-            margin-bottom: 6px;
-            font-size: 15px;
-        }
-
-        input, select {
-            width: 100%;
-            padding: 10px;
-            font-size: 15px;
-            box-sizing: border-box;
-            margin-bottom: 18px;
-            border: 1px solid #999;
-        }
-
-        .hint {
-            font-size: 13px;
-            color: #666;
-            margin-top: -13px;
-            margin-bottom: 18px;
-            line-height: 1.45;
-        }
-
-        button {
-            width: 100%;
-            padding: 14px;
-            font-size: 17px;
-            font-weight: bold;
-            background: #1a2f4b;
-            color: white;
-            border: none;
-            cursor: pointer;
-        }
-
-        .note {
-            margin-top: 24px;
-            padding-top: 14px;
-            border-top: 1px solid #ddd;
-            font-size: 13px;
-            color: #666;
-            line-height: 1.5;
-        }
-
-        .links {
-            margin-top: 14px;
-            font-size: 14px;
-        }
-
-    </style>
-
-</head>
-
-<body>
-
-    <div class="box">
-
-        <h1>Instrument Verification Application</h1>
-
-        <div class="lead">
-            Apply to have a weighing or measuring instrument verified and stamped.
-        </div>
-
-        <form action="/submit" method="POST">
-
-            <label for="serial_number">Instrument serial number</label>
-            <input type="text" id="serial_number" name="serial_number" required>
-
-            <label for="owner_name">Owner name</label>
-            <input type="text" id="owner_name" name="owner_name" required>
-
-            <label for="state_code">State or Union Territory</label>
-            <select id="state_code" name="state_code" required>
-                {% for code, name in states %}
-                    <option value="{{ code }}"
-                      {% if code == selected_state %}selected{% endif %}>
-                      {{ name }} ({{ code }})</option>
-                {% endfor %}
-            </select>
-            <div class="hint">
-                Each State sets its own fee, re-verification period and
-                reminder window. Act s.53(2)(c) and (d).
-            </div>
-
-            <label for="instrument_type">Instrument type</label>
-            <select id="instrument_type" name="instrument_type" required>
-                <option value="">Select an instrument type</option>
-                {% for name, months in instrument_types %}
-                    <option value="{{ name }}">{{ name }} — {{ months }} months</option>
-                {% endfor %}
-            </select>
-            <div class="hint">
-                The re-verification period is set by the instrument type. The system
-                calculates the expiry date from it.
-            </div>
-
-            <label for="instrument_class">Class of instrument</label>
-            <input type="text" id="instrument_class" name="instrument_class"
-                   placeholder="e.g. Class III">
-
-            <label for="max_permissible_error">Maximum permissible error</label>
-            <input type="text" id="max_permissible_error" name="max_permissible_error"
-                   placeholder="e.g. ± 1 g">
-
-            <label for="verification_date">Verification date</label>
-            <input type="date" id="verification_date" name="verification_date"
-                   value="{{ today }}" required>
-
-            <button type="submit">Submit application</button>
-
-        </form>
-
-        <div class="links">
-            <a href="/reminders">Officer view — certificates due for re-verification</a>
-        </div>
-
-        <div class="note">
-            {{ period_note }}
-        </div>
-
+<form class="panel" action="{{ url_for('issue') }}" method="get">
+  <h2>State or Union Territory</h2>
+  <div class="body row-form">
+    <div>
+      <label class="first" for="state_pick">State whose rules apply</label>
+      <select id="state_pick" name="state_code" aria-describedby="state-hint">
+        {% for code, sname in states %}
+        <option value="{{ code }}" {% if code == selected_state %}selected{% endif %}>{{ sname }} ({{ code }})</option>
+        {% endfor %}
+      </select>
+      <p class="field-hint" id="state-hint">Each State sets its own re-verification periods, districts and reminder window (Act s.53(2)(c) and (d)).</p>
     </div>
+    <button class="btn alt" type="submit">Use this State</button>
+  </div>
+</form>
 
-</body>
-
-</html>
+<form class="panel" action="{{ url_for('submit') }}" method="post" novalidate>
+  <h2>Instrument and owner</h2>
+  <div class="body">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="state_code" value="{{ selected_state }}">
+    {% set name = 'state_code' %}{% include "_field_error.html" %}
+    <div class="grid2">
+      <div>
+        <label for="serial_number">Instrument serial number</label>
+        <input id="serial_number" name="serial_number" autocomplete="off" maxlength="40" required value="{{ values.get('serial_number', '') }}"{{ described('serial_number') }}>
+        {% set name = 'serial_number' %}{% include "_field_error.html" %}
+      </div>
+      <div>
+        <label for="owner_name">Owner name</label>
+        <input id="owner_name" name="owner_name" autocomplete="organization" maxlength="120" required value="{{ values.get('owner_name', '') }}"{{ described('owner_name') }}>
+        {% set name = 'owner_name' %}{% include "_field_error.html" %}
+      </div>
+      <div>
+        <label for="jurisdiction">District where the instrument is</label>
+        <select id="jurisdiction" name="jurisdiction" required{{ described('jurisdiction', 'place-hint') }}>
+          <option value="">Select a district</option>
+          {% for place in jurisdictions %}
+          <option value="{{ place }}" {% if place == values.get('jurisdiction', me.jurisdiction) %}selected{% endif %}>{{ place }}</option>
+          {% endfor %}
+        </select>
+        <p class="field-hint" id="place-hint">Used by the fraud check that flags an issue outside the officer's own district.</p>
+        {% set name = 'jurisdiction' %}{% include "_field_error.html" %}
+      </div>
+      <div>
+        <label for="instrument_type">Instrument type</label>
+        <select id="instrument_type" name="instrument_type" required{{ described('instrument_type', 'type-hint') }}>
+          <option value="">Select an instrument type</option>
+          {% for iname, months in instrument_types %}
+          <option value="{{ iname }}" {% if iname == values.get('instrument_type') %}selected{% endif %}>{{ iname }} — {{ months }} months</option>
+          {% endfor %}
+        </select>
+        <p class="field-hint" id="type-hint">The re-verification period comes from the instrument type.</p>
+        {% set name = 'instrument_type' %}{% include "_field_error.html" %}
+      </div>
+      <div>
+        <label for="verification_date">Verification date</label>
+        <input type="date" id="verification_date" name="verification_date" value="{{ values.get('verification_date', today) }}" max="{{ today }}" required{{ described('verification_date', 'date-hint') }}>
+        <p class="field-hint" id="date-hint">Cannot be in the future.</p>
+        {% set name = 'verification_date' %}{% include "_field_error.html" %}
+      </div>
+      <div>
+        <label for="instrument_class">Class of instrument <span class="field-hint">(optional)</span></label>
+        <input id="instrument_class" name="instrument_class" maxlength="40" placeholder="e.g. Class III" value="{{ values.get('instrument_class', '') }}"{{ described('instrument_class') }}>
+        {% set name = 'instrument_class' %}{% include "_field_error.html" %}
+      </div>
+      <div>
+        <label for="max_permissible_error">Maximum permissible error <span class="field-hint">(optional)</span></label>
+        <input id="max_permissible_error" name="max_permissible_error" maxlength="40" placeholder="e.g. ± 1 g" value="{{ values.get('max_permissible_error', '') }}"{{ described('max_permissible_error') }}>
+        {% set name = 'max_permissible_error' %}{% include "_field_error.html" %}
+      </div>
+    </div>
+    <div class="actions"><button class="btn" type="submit">Issue certificate</button></div>
+  </div>
+</form>
+<p class="note">{{ period_note }}</p>
+{% endblock %}

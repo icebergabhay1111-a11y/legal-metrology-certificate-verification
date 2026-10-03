@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Help and contacts{% endblock %}
+{% block content %}
+<h1 class="title">Help and contacts</h1>
+<p class="sub">This is a student prototype. The contacts below are the official Government services; they do not operate this website.</p>
+
+<section class="panel" aria-labelledby="h-nat">
+  <h2 id="h-nat">National contacts</h2>
+  <div class="body">{% set entries = national %}{% include "_contacts.html" %}</div>
+</section>
+
+<section class="panel" aria-labelledby="h-state">
+  <h2 id="h-state">State Legal Metrology offices</h2>
+  <div class="body">
+  {% for name, entries in states %}
+    {% if entries %}<h3>{{ name }}</h3>{% include "_contacts.html" %}{% endif %}
+  {% endfor %}
+  {% if not any_state %}<p class="empty">No State office contacts are listed yet. Each will be added only with its source and the date it was checked; until then, use the national contacts above.</p>{% endif %}
+  </div>
+</section>
+
+<section class="panel" aria-labelledby="h-site">
+  <h2 id="h-site">About this website</h2>
+  <div class="body">
+    <p>Built by Team VITV SahiDaam, VIT, for Smart India Hackathon 2026, problem statement SIH26036. Source code: <a href="https://github.com/icebergabhay1111-a11y/legal-metrology-certificate-verification">GitHub</a>.</p>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% set active = 'home' %}
+{% block title %}Verify a certificate{% endblock %}
+{% block hero %}
+<section class="hero" aria-labelledby="h-hero">
+  <div class="wrap">
+    <h1 id="h-hero">Verify a Legal Metrology certificate</h1>
+    <p>Check whether a weighing or measuring instrument has a valid verification certificate, and when it expires. The status is worked out on the day you check.</p>
+    <form class="search" action="{{ url_for('verify_search') }}" method="get" role="search">
+      {% if error %}<p class="error" id="code-error">{{ error }}</p>{% endif %}
+      <label class="first" for="code">Certificate ID or serial number</label>
+      <div class="row">
+        <input id="code" name="code" inputmode="text" autocomplete="off" spellcheck="false"
+               placeholder="e.g. SD-7K4Q-9XWD or a serial number" value="{{ code or '' }}"
+               aria-describedby="code-hint{% if error %} code-error{% endif %}" required>
+        <button class="btn" type="submit">Verify certificate</button>
+      </div>
+      <p class="hint" id="code-hint">The certificate ID is printed next to its QR code; scanning the QR opens the same result. You can also type the serial number from the instrument's plate.</p>
+    </form>
+  </div>
+</section>
+{% endblock %}
+{% block content %}
+<h2 class="visually-hidden">Other services</h2>
+<div class="cards">
+  <a class="card" href="{{ url_for('auth.report') }}"><b>Report a problem</b>A scale or pump looks tampered with, or a certificate looks fake.</a>
+  <a class="card" href="{{ url_for('info', page='help') }}"><b>Help and contacts</b>National Consumer Helpline 1915 and the Legal Metrology office.</a>
+  <a class="card" href="{{ url_for('auth.login') }}"><b>Officer login</b>For Legal Metrology officers issuing certificates.</a>
+</div>
+
+<section class="panel" aria-labelledby="h-how">
+  <h2 id="h-how">How verification works</h2>
+  <div class="body">
+    <ol class="steps">
+      <li><b>Enter the ID or scan the QR.</b><br>Or type the serial number on the instrument.</li>
+      <li><b>We check the record in this system.</b><br>The status is calculated from the expiry date on the day you check.</li>
+      <li><b>Read the result.</b><br>Valid, expiring soon, expired or not found, and what it means.</li>
+    </ol>
+  </div>
+</section>
+{% endblock %}

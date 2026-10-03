@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Offline checker{% endblock %}
+{% block content %}
+<h1 class="title">Offline certificate checker</h1>
+<p class="sub">For weighbridges, mandis and checkposts with no signal. Open this page once while online; after that it works with no network. It checks that the certificate's QR code was signed by Sahi Daam and has not been altered.</p>
+
+<section class="panel" aria-labelledby="h-check">
+  <h2 id="h-check">Check a QR code</h2>
+  <div class="body">
+    <p id="offline-ready" class="field-hint" aria-live="polite">Loading the checker…</p>
+    <div class="actions" id="scan-actions" hidden>
+      <button class="btn" type="button" id="scan-start">Scan with camera</button>
+      <button class="btn alt" type="button" id="scan-stop" hidden>Stop camera</button>
+    </div>
+    <video id="scan-video" class="scan-video" playsinline muted hidden></video>
+    <label for="qr-text">Or paste the text of the QR code</label>
+    <textarea id="qr-text" spellcheck="false" autocomplete="off" aria-describedby="qr-hint"></textarea>
+    <p class="field-hint" id="qr-hint">Most phone cameras can copy a QR code's text. It starts with the certificate's web address.</p>
+    <div class="actions"><button class="btn" type="button" id="qr-check">Check signature</button></div>
+  </div>
+</section>
+
+<div id="offline-result" aria-live="assertive"></div>
+
+<section class="panel" aria-labelledby="h-limits">
+  <h2 id="h-limits">What an offline check can and cannot tell you</h2>
+  <div class="body">
+    <ul>
+      <li><strong>It can tell you</strong> the QR code was issued by this system and that none of its details (ID, serial number, owner, type, dates, officer) has been changed.</li>
+      <li><strong>It works out expiry</strong> from your phone's date. If the phone's date is wrong, so is that result.</li>
+      <li><strong>It cannot tell you</strong> whether the certificate was revoked after it was printed. Check online when you have signal.</li>
+      <li>It needs a recent browser (Chrome, Edge, Safari or Firefox from 2025 on). Camera scanning works where the browser supports it; pasting works everywhere.</li>
+    </ul>
+  </div>
+</section>
+<noscript><p class="error">The offline checker needs JavaScript. You can still check any certificate online from the home page.</p></noscript>
+<script src="{{ url_for('static', filename='js/offline.js') }}" defer></script>
+{% endblock %}

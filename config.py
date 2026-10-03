@@ -16,6 +16,9 @@ we show an officer when something is wrong.
 
 import json
 import os
+from datetime import datetime
+
+import clock
 
 STATES_DIR = "states"
 ENFORCEMENT_FILE = "enforcement.json"
@@ -37,7 +40,11 @@ PERIOD_NOTE = (
 )
 
 
+STATE_ERRORS = []      # file names that failed to load (SYS-503), shown on /admin/health
+
+
 def _load_states():
+    """Read every states/XX.json. A broken file is skipped and recorded."""
     out = {}
     if not os.path.isdir(STATES_DIR):
         return out
@@ -49,7 +56,9 @@ def _load_states():
                 cfg = json.load(f)
             out[cfg["state_code"].upper()] = cfg
         except (OSError, ValueError, KeyError):
-            # A broken config file must never take the whole app down.
+            # A broken config file must never take the whole app down,
+            # but it must be visible: SYS-503 on the admin health page.
+            STATE_ERRORS.append(name)
             continue
     return out
 
@@ -86,6 +95,11 @@ def reminder_days(state_code):
     return int(state(state_code).get("reminder_window_days", 60))
 
 
+def reminder_windows():
+    """[(State name, days)] - each State's 'due soon' window, for display."""
+    return sorted((s.get("state_name", c), reminder_days(c)) for c, s in STATES.items())
+
+
 def daily_limit(state_code):
     return int(state(state_code).get("daily_issue_limit", 40))
 
@@ -119,3 +133,61 @@ def enforcement_for(situation_keyword):
         if kw in (entry.get("situation") or "").lower():
             return entry
     return None
+
+
+def jurisdictions(state_code):
+    """Districts an instrument can be in, for this State. [] if not configured."""
+    return list(state(state_code).get("jurisdictions") or [])
+
+
+# ------------------------------------------------------------------
+# CONTACTS - every number carries where it came from and when it was checked
+# ------------------------------------------------------------------
+
+def _load_national():
+    """National contacts (NCH 1915, Legal Metrology Division) from contacts_national.json."""
+    try:
+        with open("contacts_national.json", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return []
+
+
+NATIONAL_CONTACTS = _load_national()
+
+
+def is_sourced(entry):
+    """A contact may be shown only if it says where it came from and when."""
+    return bool((entry.get("source") or "").strip() and (entry.get("verified_on") or "").strip())
+
+
+def has_details(entry):
+    """True if the entry holds a phone, email, address or link."""
+    return any((entry.get(k) or "").strip() for k in ("phone", "email", "url", "address"))
+
+
+def contacts_for(state_code):
+    """Sourced contacts for this State. An empty entry shows nothing at all."""
+    entries = (state(state_code).get("contacts") or []) if state_code else []
+    return [e for e in entries if has_details(e) and is_sourced(e)]
+
+
+def state_contacts():
+    """[(State name, [sourced contacts])] for the help page."""
+    return [(s.get("state_name", c), contacts_for(c)) for c, s in sorted(STATES.items())]
+
+
+def stale_contacts(max_age_days=180):
+    """Contact labels whose verified_on date is older than max_age_days."""
+    out = []
+    every = list(NATIONAL_CONTACTS)
+    for cfg in STATES.values():
+        every.extend(cfg.get("contacts") or [])
+    for entry in every:
+        try:
+            checked = datetime.strptime(entry.get("verified_on", ""), "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if (clock.today() - checked).days > max_age_days:
+            out.append(entry.get("label", "?"))
+    return out

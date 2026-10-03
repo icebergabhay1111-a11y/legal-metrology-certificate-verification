@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Accessibility statement{% endblock %}
+{% block content %}
+<h1 class="title">Accessibility statement</h1>
+<p class="sub">We aim for WCAG 2.1 level AA, the level the Guidelines for Indian Government Websites and Apps (GIGW 3.0) require.</p>
+<section class="panel"><h2>What you can do on this site</h2><div class="body">
+  <ul>
+    <li>Change the text size with the A-, A and A+ buttons at the top, or with your browser's zoom.</li>
+    <li>Switch to high contrast with the button at the top.</li>
+    <li>Use every page with a keyboard alone. "Skip to main content" is the first link on each page.</li>
+    <li>Read every status as a word and a symbol, not by colour alone.</li>
+    <li>Check a certificate with JavaScript turned off.</li>
+  </ul>
+</div></section>
+<section class="panel"><h2>Known limits</h2><div class="body">
+  <ul>
+    <li>The site is in English only. A Hindi version is planned.</li>
+    <li>This statement has not been confirmed by an independent accessibility audit.</li>
+  </ul>
+</div></section>
+<p>Found a problem? Use <a href="{{ url_for('auth.report') }}">Report a problem</a> and describe the page.</p>
+{% endblock %}

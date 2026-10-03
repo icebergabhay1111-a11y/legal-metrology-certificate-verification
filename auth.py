@@ -1,82 +1,57 @@
 """
-auth.py — login, roles, and the audit log.
+auth.py - login, the four roles, the audit log, the dashboard and public reports.
 
-Owner: Abhay (26BDE0132) — branch feat/auth-and-roles
+Original owner: Abhay (26BDE0132).
 
-app1.py wires this in with `app.register_blueprint(auth.auth_bp)`.
-Its tables (users, audit, reports) are created by migrations/, not here.
+DEMO ACCOUNTS
+Render's free disk is wiped on every deploy, so the demo logins are made
+again at every start (skipped if they already exist, so a real password
+is never overwritten). Each account's password comes from its own
+environment variable (PW_TRADER, PW_LAB, PW_DISTRICT, PW_ADMIN, PW_MZ).
+Locally a known demo password is used; with APP_ENV=production an account
+whose variable is missing is not created at all.
 
-One more thing is NOT optional but IS a small edit to app1.py's own
-code, not to this file: stamping officer_id / officer_name onto a
-certificate at the moment of issue. That patch is written out in
-full, ready to paste, in INTEGRATION.md next to this file.
+AUDIT LOG
+Every action goes through log(). Each row stores a hash of itself and of
+the row before it, so deleting or editing a past row breaks the chain and
+the audit page says where.
 """
 
-import clock
 import functools
+import hashlib
 import os
-from datetime import datetime, timedelta
+import secrets
 
-from flask import (
-    Blueprint, g, redirect, render_template,
-    request, session, url_for,
-)
-from sqlalchemy.exc import SQLAlchemyError
+from flask import Blueprint, g, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
+import certs
+import clock
 import db
+import security
 
-
-# Four roles. Do not add a fifth — see the task brief.
 ROLES = ("trader", "lab_officer", "district_officer", "admin")
+OFFICERS = ("lab_officer", "district_officer", "admin")
 
 auth_bp = Blueprint("auth", __name__)
 
-
-# ============================================================
-# DATABASE
-# ============================================================
-
-# Tables are created by migrations (migrations/versions/), not here.
-# Queries go through db.py so the same SQL runs on SQLite and PostgreSQL.
-
-
-# ============================================================
-# DEMO ACCOUNTS - THIS IS WHAT MAKES LOGIN WORK ON RENDER
-# ============================================================
-# THE PROBLEM IT FIXES:
-# Render's free tier has an EPHEMERAL filesystem. Their own docs say
-# "any changes to your web service's filesystem (uploaded images, local
-# SQLite databases, etc.) are lost every time the service redeploys,
-# restarts, or spins down." So certificates.db - incl. the users table -
-# is wiped on every deploy. seed_users.py can't help bc there's no shell
-# on the free plan. Result: 0 users -> nobody can log in.
-#
-# THE FIX: create the accounts at startup, every startup. Idempotent,
-# i.e. running it again does nothing if the user already exists.
-#
-# Passwords come from env vars if set (do that on Render), else the
-# demo defaults below. Change them by setting the env vars - no code
-# edit, no redeploy of the code itself.
-# ------------------------------------------------------------
-
 DEMO_USERS = [
-    # username,   env var for pw,   full name,                 role,               state, jurisdiction
-    ("trader1",   "PW_TRADER",      "Ramesh Trader",           "trader",           "TN", "Chennai"),
-    ("lab1",      "PW_LAB",         "Priya Lab Officer",       "lab_officer",      "TN", "Chennai"),
-    ("district1", "PW_DISTRICT",    "Suresh District Officer", "district_officer", "TN", "Chennai"),
-    ("admin1",    "PW_ADMIN",       "Admin User",              "admin",            "TN", "State HQ"),
-    ("mz1",       "PW_MZ",          "Lalrin Lab Officer",      "lab_officer",      "MZ", "Aizawl"),
+    # username, env var for pw, full name, role, state, jurisdiction ("" = whole State)
+    ("trader1",   "PW_TRADER",   "Ramesh Trader",           "trader",           "TN", "Chennai"),
+    ("lab1",      "PW_LAB",      "Priya Lab Officer",       "lab_officer",      "TN", "Chennai"),
+    ("district1", "PW_DISTRICT", "Suresh District Officer", "district_officer", "TN", "Chennai"),
+    ("admin1",    "PW_ADMIN",    "Admin User",              "admin",            "TN", ""),
+    ("mz1",       "PW_MZ",       "Lalrin Lab Officer",      "lab_officer",      "MZ", "Aizawl"),
 ]
-
 DEFAULT_DEMO_PASSWORD = "sahidaam2026"
+
+# Checked when the username does not exist, so a wrong username takes as
+# long as a wrong password and response time does not reveal which it was.
+_DUMMY_HASH = generate_password_hash(secrets.token_hex(16))
 
 
 def ensure_demo_users():
-    """Make sure the four demo logins exist. Runs on every boot.
-
-    Skips anyone already there, so it never overwrites a real password.
-    """
+    """Create any missing demo account. Never changes an existing one."""
     for username, env_var, full_name, role, state_code, jurisdiction in DEMO_USERS:
         if db.fetch_one("SELECT id FROM users WHERE username = :u", u=username):
             continue
@@ -85,37 +60,57 @@ def ensure_demo_users():
             # Never fall back to the password printed in public source.
             print(f"WARNING: {env_var} not set - account '{username}' not created.")
             continue
-        password = password or DEFAULT_DEMO_PASSWORD
         db.run(
-            """INSERT INTO users
-               (username, password_hash, full_name, role, state_code, jurisdiction)
+            """INSERT INTO users (username, password_hash, full_name, role, state_code, jurisdiction)
                VALUES (:u, :h, :name, :role, :state, :jur)""",
-            u=username, h=generate_password_hash(password), name=full_name,
-            role=role, state=state_code, jur=jurisdiction,
+            u=username, h=generate_password_hash(password or DEFAULT_DEMO_PASSWORD),
+            name=full_name, role=role, state=state_code, jur=jurisdiction,
         )
 
 
 # ============================================================
-# AUDIT LOG
+# AUDIT LOG (hash-chained)
 # ============================================================
-# One function. Every event goes through this — do not write
-# the INSERT out again somewhere else.
-# ------------------------------------------------------------
+
+def _row_hash(prev_hash, at, actor_name, action, target, detail):
+    """SHA-256 over the previous row's hash and this row's fields."""
+    text = "\x1f".join(str(x or "") for x in (prev_hash, at, actor_name, action, target, detail))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
 
 def log(action, target="", detail=""):
+    """Record one action. The only place that writes to the audit table."""
     actor_id = session.get("user_id")
     actor_name = session.get("full_name", "anonymous")
+    at = clock.stamp()
+    with db.engine.begin() as conn:
+        last = conn.execute(db.text("SELECT row_hash FROM audit ORDER BY id DESC LIMIT 1")).fetchone()
+        prev = last[0] if last and last[0] else ""
+        conn.execute(db.text(
+            """INSERT INTO audit (at, actor_id, actor_name, action, target, detail, prev_hash, row_hash)
+               VALUES (:at, :actor_id, :actor_name, :action, :target, :detail, :prev, :hash)"""),
+            dict(at=at, actor_id=actor_id, actor_name=actor_name, action=action, target=target,
+                 detail=detail, prev=prev,
+                 hash=_row_hash(prev, at, actor_name, action, target, detail)))
 
-    db.run(
-        """INSERT INTO audit (at, actor_id, actor_name, action, target, detail)
-           VALUES (:at, :actor_id, :actor_name, :action, :target, :detail)""",
-        at=clock.stamp(), actor_id=actor_id,
-        actor_name=actor_name, action=action, target=target, detail=detail,
-    )
+
+def check_audit_chain():
+    """(True, None) if every row's hash is intact, else (False, first bad row id)."""
+    prev = ""
+    rows = db.fetch_all("SELECT id, at, actor_name, action, target, detail, prev_hash, row_hash "
+                        "FROM audit ORDER BY id")
+    for row in rows:
+        if row.row_hash is None:          # written before the chain existed
+            continue
+        expected = _row_hash(prev, row.at, row.actor_name, row.action, row.target, row.detail)
+        if row.prev_hash != prev or row.row_hash != expected:
+            return False, row.id
+        prev = row.row_hash
+    return True, None
 
 
 # ============================================================
-# SESSION HELPERS
+# SESSION AND ROLES
 # ============================================================
 
 def current_user():
@@ -124,76 +119,56 @@ def current_user():
         return None
     return {
         "id": session["user_id"],
-        "username": session["username"],
-        "full_name": session["full_name"],
-        "role": session["role"],
+        "username": session.get("username"),
+        "full_name": session.get("full_name"),
+        "role": session.get("role"),
+        "state_code": session.get("state_code"),
+        "jurisdiction": session.get("jurisdiction") or "",
     }
 
 
 def role_required(*allowed_roles):
-    """Route decorator. Refuses server-side — not a hidden button.
+    """Route decorator. The server refuses; hiding a button is not a control.
 
-    Not logged in -> sent to the login page.
-    Logged in but wrong role -> HTTP 403, page says so.
+    Not logged in: sent to login (and back afterwards, for a page visit).
+    Wrong role: 403, and the attempt is logged - probing is itself a signal.
     """
     def decorator(view):
         @functools.wraps(view)
         def wrapped(*args, **kwargs):
             user = current_user()
-
             if user is None:
-                # Only carry a "next" redirect for plain page visits (GET).
-                # If someone was blocked while POSTing a form (e.g. /submit),
-                # sending them back with a GET after login would hit the
-                # same "Method Not Allowed" wall the form exists to avoid —
-                # so send them to the homepage instead in that case.
                 if request.method == "GET":
                     return redirect(url_for("auth.login", next=request.path))
                 return redirect(url_for("auth.login"))
-
             if user["role"] not in allowed_roles:
+                log("access refused", target=request.path, detail=f"SYS-507 role {user['role']}")
                 return render_template("403.html", role=user["role"]), 403
-
             g.user = user
             return view(*args, **kwargs)
         return wrapped
     return decorator
 
 
-# ============================================================
-# LOGIN / LOGOUT
-# ============================================================
-
 @auth_bp.route("/login", methods=["GET", "POST"])
 def login():
-    if request.method == "GET":
+    """Officer sign-in. Same message and timing for a wrong name or password."""
+    if request.method != "POST":       # GET and HEAD just show the form
         return render_template("login.html", error=None)
-
-    username = request.form.get("username", "").strip()
-    password = request.form.get("password", "")
-
-    found = db.fetch_one("SELECT * FROM users WHERE username = :u", u=username)
-    row = found._mapping if found else None
-
-    # Same message either way — never reveal whether the
-    # username exists.
-    generic_error = "Incorrect username or password."
-
-    if row is None:
-        log("failed login", target=username, detail="no such user")
-        return render_template("login.html", error=generic_error), 401
-
-    if not check_password_hash(row["password_hash"], password):
-        log("failed login", target=username, detail="wrong password")
-        return render_template("login.html", error=generic_error), 401
-
-    session["user_id"] = row["id"]
-    session["username"] = row["username"]
-    session["full_name"] = row["full_name"]
-    session["role"] = row["role"]
-
+    security.rate_limit("login")
+    username = request.form.get("username", "").strip()[:60]
+    password = request.form.get("password", "")[:200]
+    row = db.fetch_one("SELECT * FROM users WHERE username = :u", u=username)
+    stored_hash = row.password_hash if row else _DUMMY_HASH
+    if not check_password_hash(stored_hash, password) or row is None:
+        log("failed login", target=username, detail="no such user" if row is None else "wrong password")
+        return render_template("login.html", error="Incorrect username or password."), 401
+    # A fresh session on every login: nothing set before sign-in survives it.
+    session.clear()
+    session.permanent = True
+    session.update(user_id=row.id, username=row.username, full_name=row.full_name,
+                   role=row.role, state_code=row.state_code, jurisdiction=row.jurisdiction or "")
     log("login", target=username)
-
     return redirect(safe_next(request.args.get("next")))
 
 
@@ -204,113 +179,64 @@ def safe_next(target):
     return url_for("auth.dashboard")
 
 
-@auth_bp.route("/logout")
+@auth_bp.route("/logout", methods=["POST"])
 def logout():
-    username = session.get("username", "")
-    log("logout", target=username)
+    """Sign out. POST with a CSRF token, so another site cannot sign you out."""
+    log("logout", target=session.get("username", ""))
     session.clear()
     return redirect(url_for("home"))
 
 
 # ============================================================
-# PUBLIC REPORT FORM — no login
+# PUBLIC REPORT FORM - no login
 # ============================================================
 
 @auth_bp.route("/report", methods=["GET", "POST"])
 def report():
-    if request.method == "GET":
+    """Anyone can report a suspect instrument; they get a reference to quote."""
+    if request.method != "POST":       # GET and HEAD just show the form
         return render_template("report.html", submitted=False, error=None)
-
-    serial_number = request.form.get("serial_number", "").strip()
-    description = request.form.get("description", "").strip()
-
+    security.rate_limit("report")
+    serial_number = certs.normalise_serial(request.form.get("serial_number", ""))
+    description = " ".join(request.form.get("description", "").split())
+    error = None
     if not serial_number or not description:
-        return render_template(
-            "report.html", submitted=False,
-            error="Serial number and description are both required.",
-        )
-
-    db.run(
-        "INSERT INTO reports (at, serial_number, description) VALUES (:at, :serial, :text)",
-        at=clock.stamp(), serial=serial_number, text=description,
-    )
-
-    log("public report received", target=serial_number, detail=description[:200])
-
-    return render_template("report.html", submitted=True, error=None)
+        error = "Serial number and description are both required."
+    elif len(serial_number) > 40 or len(description) > 2000:
+        error = "Keep the serial number under 40 characters and the description under 2,000."
+    if error:
+        return render_template("report.html", submitted=False, error=error), 400
+    reference = "R-" + certs.new_code()[3:]
+    db.run("INSERT INTO reports (at, serial_number, description, reference) "
+           "VALUES (:at, :serial, :text, :ref)",
+           at=clock.stamp(), serial=serial_number, text=description, ref=reference)
+    log("public report received", target=serial_number, detail=f"{reference}: {description[:200]}")
+    return render_template("report.html", submitted=True, error=None, reference=reference)
 
 
 # ============================================================
-# OFFICER DASHBOARD
+# OFFICER DASHBOARD AND AUDIT LOG
 # ============================================================
 
 @auth_bp.route("/dashboard")
-@role_required("lab_officer", "district_officer", "admin")
+@role_required(*OFFICERS)
 def dashboard():
-    today = clock.today()
-    cutoff = today + timedelta(days=60)
+    """What needs action first: fraud alerts, expired, due soon, public reports."""
+    due, expired = certs.due_and_expired()
+    reports = db.fetch_all("SELECT id, at, serial_number, description, status, reference "
+                           "FROM reports ORDER BY id DESC LIMIT 100")
+    fraud_alerts = db.fetch_all("SELECT id, at, code, certificate_code, serial_number, officer_name, "
+                                "reason, status FROM fraud_alerts ORDER BY id DESC LIMIT 50")
+    return render_template("dashboard.html", today=clock.today().isoformat(), due=due,
+                           expired=expired, reports=reports, fraud_alerts=fraud_alerts,
+                           user=current_user())
 
-    cert_rows = db.fetch_all("""
-        SELECT id, serial_number, owner_name, instrument_type, expiry_date
-        FROM certificates
-        ORDER BY expiry_date ASC
-    """)
-
-    due, expired = [], []
-
-    for row in cert_rows:
-        try:
-            expiry = datetime.strptime(row.expiry_date, "%Y-%m-%d").date()
-        except (ValueError, TypeError):
-            continue
-
-        item = dict(row._mapping)
-        item["days"] = (expiry - today).days
-
-        if expiry < today:
-            expired.append(item)
-        elif expiry <= cutoff:
-            due.append(item)
-
-    reports = db.fetch_all("""
-        SELECT id, at, serial_number, description, status
-        FROM reports
-        ORDER BY at DESC
-    """)
-
-    # Krishna's rules (fraud.py) write into this table at the moment a
-    # certificate is issued. We just read them out here.
-    try:
-        fraud_alerts = db.fetch_all(
-            """SELECT id, at, certificate_code, serial_number, officer_name,
-                      reason, status
-               FROM fraud_alerts ORDER BY id DESC LIMIT 50"""
-        )
-    except SQLAlchemyError:
-        fraud_alerts = []      # table not made yet - don't kill the page
-
-    return render_template(
-        "dashboard.html",
-        due=due,
-        expired=expired,
-        reports=reports,
-        fraud_alerts=fraud_alerts,
-        user=current_user(),
-    )
-
-
-# ============================================================
-# ADMIN — AUDIT LOG
-# ============================================================
 
 @auth_bp.route("/admin/audit")
 @role_required("admin")
 def audit_log():
-    entries = db.fetch_all("""
-        SELECT at, actor_name, action, target, detail
-        FROM audit
-        ORDER BY id DESC
-        LIMIT 200
-    """)
-
-    return render_template("audit.html", entries=entries)
+    """The last 200 actions, newest first, and whether the hash chain is intact."""
+    entries = db.fetch_all("SELECT id, at, actor_name, action, target, detail FROM audit "
+                           "ORDER BY id DESC LIMIT 200")
+    intact, broken_at = check_audit_chain()
+    return render_template("audit.html", entries=entries, intact=intact, broken_at=broken_at)

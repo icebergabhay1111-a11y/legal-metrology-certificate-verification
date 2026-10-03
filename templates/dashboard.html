@@ -1,185 +1,66 @@
-<!DOCTYPE html>
-<html>
+{% extends "base.html" %}
+{% set active = 'dashboard' %}
+{% block title %}Officer dashboard{% endblock %}
+{% block content %}
+<h1 class="title">Officer dashboard</h1>
+<p class="sub">{{ user.full_name }} · overview as on {{ today|nice }}. What needs action is at the top.</p>
 
-<head>
-    <title>Officer Dashboard</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+<section class="tiles" aria-label="Summary">
+  <a class="tile bad" href="#fraud"><span class="n">{{ fraud_alerts|length }}</span>Fraud alerts</a>
+  <a class="tile bad" href="#expired"><span class="n">{{ expired|length }}</span>Expired certificates</a>
+  <a class="tile warn" href="#due"><span class="n">{{ due|length }}</span>Due for re-verification</a>
+  <a class="tile" href="#reports"><span class="n">{{ reports|length }}</span>Public reports</a>
+</section>
 
-    <style>
+<div class="actions no-print top">
+  <a class="btn" href="{{ url_for('issue') }}">Issue a certificate</a>
+  <a class="btn alt" href="{{ url_for('reminders') }}">Full re-verification list</a>
+  {% if user.role == 'admin' %}<a class="btn alt" href="{{ url_for('auth.audit_log') }}">Audit log</a>{% endif %}
+</div>
 
-        body {
-            background: #f2f2f2;
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 40px 16px;
-        }
+<section class="panel" id="fraud" aria-labelledby="h-fraud">
+  <h2 id="h-fraud">Fraud alerts</h2>
+  <div class="body">
+  {% if fraud_alerts %}
+    <div class="tbl"><table>
+      <thead><tr><th scope="col">Code</th><th scope="col">When</th><th scope="col">Certificate</th><th scope="col">Serial</th><th scope="col">Officer</th><th scope="col">Why it was flagged</th></tr></thead>
+      <tbody>{% for a in fraud_alerts %}<tr>
+        <td><span class="badge bad">{{ a.code or '—' }}</span></td>
+        <td>{{ a.at }}</td>
+        <td><a href="{{ url_for('verify', code=a.certificate_code) }}">{{ a.certificate_code }}</a></td>
+        <td>{{ a.serial_number }}</td><td>{{ a.officer_name }}</td><td>{{ a.reason }}</td>
+      </tr>{% endfor %}</tbody>
+    </table></div>
+    <p class="note">A flag is a suspicion, not a finding. The certificate was issued; review it.</p>
+  {% else %}<p class="empty">No fraud alerts.</p>{% endif %}
+  </div>
+</section>
 
-        .wrap {
-            max-width: 900px;
-            margin: auto;
-        }
+<section class="panel" id="expired" aria-labelledby="h-exp">
+  <h2 id="h-exp">Expired certificates</h2>
+  <div class="body">
+  {% if expired %}{% with rows=expired, mode='expired', caption='Expired certificates' %}{% include "_cert_table.html" %}{% endwith %}
+  {% else %}<p class="empty">No certificates have expired.</p>{% endif %}
+  </div>
+</section>
 
-        .top {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 24px;
-        }
+<section class="panel" id="due" aria-labelledby="h-due">
+  <h2 id="h-due">Due for re-verification</h2>
+  <div class="body">
+  {% if due %}{% with rows=due, mode='due', caption='Certificates due soon' %}{% include "_cert_table.html" %}{% endwith %}
+  {% else %}<p class="empty">Nothing falls due within any State's window.</p>{% endif %}
+  </div>
+</section>
 
-        h1 {
-            font-size: 26px;
-            margin: 0;
-        }
-
-        .who {
-            font-size: 14px;
-            color: #555;
-        }
-
-        .who a {
-            color: #a11414;
-            text-decoration: none;
-            font-weight: bold;
-        }
-
-        .panel {
-            background: white;
-            border: 3px solid #222;
-            margin-bottom: 24px;
-            box-sizing: border-box;
-        }
-
-        .panel-title {
-            padding: 12px 18px;
-            font-weight: bold;
-            font-size: 16px;
-            border-bottom: 3px solid #222;
-            background: #eee;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        th, td {
-            text-align: left;
-            padding: 10px 18px;
-            font-size: 14px;
-            border-bottom: 1px solid #ddd;
-        }
-
-        th {
-            color: #555;
-            font-size: 12px;
-            text-transform: uppercase;
-        }
-
-        .empty {
-            padding: 18px;
-            color: #888;
-            font-size: 14px;
-        }
-
-        .badge-expired { color: #a11414; font-weight: bold; }
-        .badge-due     { color: #8a5a00; font-weight: bold; }
-
-    </style>
-
-</head>
-
-<body>
-
-    <div class="wrap">
-
-        <div class="top">
-            <h1>Officer Dashboard</h1>
-            <div class="who">
-                {{ user.full_name }} — {{ user.role }}
-                &nbsp;·&nbsp;
-                <a href="{{ url_for('auth.logout') }}">Log out</a>
-                {% if user.role == 'admin' %}
-                    &nbsp;·&nbsp;
-                    <a href="{{ url_for('auth.audit_log') }}">Audit log</a>
-                {% endif %}
-            </div>
-        </div>
-
-        <div class="panel">
-            <div class="panel-title">Fraud Alerts</div>
-            {% if fraud_alerts %}
-                <table>
-                    <tr><th>Serial number</th><th>Reason</th></tr>
-                    {% for alert in fraud_alerts %}
-                        <tr><td>{{ alert.serial_number }}</td><td>{{ alert.reason }}</td></tr>
-                    {% endfor %}
-                </table>
-            {% else %}
-                <div class="empty">No fraud alerts at this time.</div>
-            {% endif %}
-        </div>
-
-        <div class="panel">
-            <div class="panel-title">Public Reports</div>
-            {% if reports %}
-                <table>
-                    <tr><th>When</th><th>Serial number</th><th>Description</th><th>Status</th></tr>
-                    {% for r in reports %}
-                        <tr>
-                            <td>{{ r.at }}</td>
-                            <td>{{ r.serial_number }}</td>
-                            <td>{{ r.description }}</td>
-                            <td>{{ r.status }}</td>
-                        </tr>
-                    {% endfor %}
-                </table>
-            {% else %}
-                <div class="empty">No public reports yet.</div>
-            {% endif %}
-        </div>
-
-        <div class="panel">
-            <div class="panel-title">Expired Certificates</div>
-            {% if expired %}
-                <table>
-                    <tr><th>Serial number</th><th>Owner</th><th>Type</th><th>Expired on</th><th>Days ago</th></tr>
-                    {% for c in expired %}
-                        <tr>
-                            <td>{{ c.serial_number }}</td>
-                            <td>{{ c.owner_name }}</td>
-                            <td>{{ c.instrument_type }}</td>
-                            <td>{{ c.expiry_date }}</td>
-                            <td class="badge-expired">{{ -c.days }}</td>
-                        </tr>
-                    {% endfor %}
-                </table>
-            {% else %}
-                <div class="empty">Nothing expired.</div>
-            {% endif %}
-        </div>
-
-        <div class="panel">
-            <div class="panel-title">Certificates Due Soon (next 60 days)</div>
-            {% if due %}
-                <table>
-                    <tr><th>Serial number</th><th>Owner</th><th>Type</th><th>Expires on</th><th>Days left</th></tr>
-                    {% for c in due %}
-                        <tr>
-                            <td>{{ c.serial_number }}</td>
-                            <td>{{ c.owner_name }}</td>
-                            <td>{{ c.instrument_type }}</td>
-                            <td>{{ c.expiry_date }}</td>
-                            <td class="badge-due">{{ c.days }}</td>
-                        </tr>
-                    {% endfor %}
-                </table>
-            {% else %}
-                <div class="empty">Nothing due soon.</div>
-            {% endif %}
-        </div>
-
-    </div>
-
-</body>
-
-</html>
+<section class="panel" id="reports" aria-labelledby="h-rep">
+  <h2 id="h-rep">Public reports</h2>
+  <div class="body">
+  {% if reports %}
+    <div class="tbl"><table>
+      <thead><tr><th scope="col">Reference</th><th scope="col">Received</th><th scope="col">Serial number</th><th scope="col">What was reported</th><th scope="col">Status</th></tr></thead>
+      <tbody>{% for r in reports %}<tr><td>{{ r.reference or "—" }}</td><td>{{ r.at }}</td><td>{{ r.serial_number }}</td><td>{{ r.description }}</td><td>{{ r.status }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+  {% else %}<p class="empty">No public reports.</p>{% endif %}
+  </div>
+</section>
+{% endblock %}

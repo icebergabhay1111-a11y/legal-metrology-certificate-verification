@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}System health{% endblock %}
+{% block content %}
+<p class="crumbs"><a href="{{ url_for('auth.dashboard') }}">Dashboard</a> › System health</p>
+<h1 class="title">System health</h1>
+<p class="sub">What is working, read at a glance. The public uptime check is <a href="{{ url_for('healthz') }}">/healthz</a>, which deliberately does not touch the database.</p>
+<section class="panel"><h2>Checks</h2><div class="body">
+  <div class="tbl"><table>
+    <thead><tr><th scope="col">Check</th><th scope="col">Result</th><th scope="col">Detail</th></tr></thead>
+    <tbody>{% for name, (ok, detail) in checks.items() %}<tr>
+      <th scope="row">{{ name }}</th>
+      <td><span class="badge {{ 'ok' if ok else 'bad' }}">{{ '✓ OK' if ok else '✕ Problem' }}</span></td>
+      <td>{{ detail }}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+</div></section>
+{% endblock %}

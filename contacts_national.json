@@ -1,0 +1,22 @@
+[
+  {
+    "label": "National Consumer Helpline (NCH)",
+    "what_they_do": "Registers and tracks a consumer grievance, including short weight or measure.",
+    "phone": "1915",
+    "phone_note": "Toll-free, 8 a.m. to 8 p.m., 17 languages",
+    "whatsapp": "+91 88000 01915",
+    "url": "https://consumerhelpline.gov.in/",
+    "source": "consumerhelpline.gov.in",
+    "verified_on": "2026-09-24"
+  },
+  {
+    "label": "Legal Metrology Division, Department of Consumer Affairs",
+    "what_they_do": "The national Legal Metrology office. State offices inspect instruments and act under section 15.",
+    "address": "The Director, Legal Metrology, Department of Consumer Affairs, 461-A Krishi Bhavan, New Delhi",
+    "phone": "011-23386194, 011-23389489",
+    "phone_note": "Technical issues: 011-23381689",
+    "email": "dirwm-ca@nic.in",
+    "source": "lm.doca.gov.in/ContactUs.aspx",
+    "verified_on": "2026-09-24"
+  }
+]

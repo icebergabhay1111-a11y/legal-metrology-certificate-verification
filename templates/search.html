@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% set active = 'home' %}
+{% block title %}Search results{% endblock %}
+{% block content %}
+<p class="crumbs"><a href="{{ url_for('home') }}">Verify a certificate</a> › Search</p>
+<h1 class="title">Certificates for “{{ query }}”</h1>
+{% if results %}
+<p class="sub">{{ results|length }} certificate{{ '' if results|length == 1 else 's' }} recorded for this serial number, newest first. Status is worked out today.</p>
+<div class="tbl"><table>
+  <thead><tr><th scope="col">Certificate</th><th scope="col">Instrument</th><th scope="col">Verified on</th><th scope="col">Expires on</th><th scope="col">Status today</th></tr></thead>
+  <tbody>{% for row, r in results %}<tr>
+    <th scope="row"><a href="{{ url_for('verify', code=row.code) }}">{{ row.code }}</a></th>
+    <td>{{ row.instrument_type }}</td><td>{{ row.verification_date|nice }}</td><td>{{ row.expiry_date|nice }}</td>
+    <td>{% set tone = 'ok' if r.status == 'VALID' else ('warn' if r.status == 'EXPIRING SOON' else 'bad') %}<span class="badge {{ tone }}">{{ '✓' if tone == 'ok' else ('!' if tone == 'warn' else '✕') }} {{ r.status }}</span></td>
+  </tr>{% endfor %}</tbody>
+</table></div>
+<p class="note">A serial number is not unique across manufacturers. Check the instrument type and owner on the certificate page.</p>
+{% else %}
+<div class="status none" role="alert" data-status="NOT FOUND"><span class="ico" aria-hidden="true">?</span><div>
+  <strong>NOT FOUND</strong>
+  <p>No certificate ID or serial number matches “{{ query }}”. Check what you typed. If the instrument is in use with no certificate, please report it.</p></div></div>
+{% endif %}
+<div class="actions">
+  <a class="btn" href="{{ url_for('home') }}">Search again</a>
+  <a class="btn alt" href="{{ url_for('auth.report') }}">Report a problem</a>
+</div>
+{% endblock %}
