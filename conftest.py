@@ -32,7 +32,7 @@ def drop_db():
     if os.environ.get("APP_ENV") == "production":
         raise RuntimeError("refusing to wipe a production database")
     if db.engine.dialect.name == "postgresql":
-        db.run("DROP TABLE IF EXISTS certificates, fraud_alerts, users, audit, "
+        db.run("DROP TABLE IF EXISTS certificates, fraud_alerts, users, audit, applications, "
                "reports, alembic_version CASCADE")
         return
     for _ in range(5):

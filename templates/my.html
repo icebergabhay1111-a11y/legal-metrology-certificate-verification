@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}My instruments{% endblock %}
+{% block content %}
+<h1 class="title">My instruments</h1>
+<p class="sub">Certificates issued to <strong>{{ user.firm_name or 'your firm' }}</strong>, with their status today.</p>
+
+{% if request.args.get('sent') %}
+<p class="success" role="status">Request {{ request.args.get('sent') }} has been sent to the Legal Metrology office. Its progress is shown below.</p>
+{% endif %}
+{% if not user.firm_name %}
+<p class="error" role="alert">Your account is not linked to a firm, so no certificates can be shown. Ask the office to link it.</p>
+{% endif %}
+
+{% if due_count %}
+<div class="status warn" role="status"><span class="ico" aria-hidden="true">!</span><div>
+  <strong>{{ due_count }} instrument{{ '' if due_count == 1 else 's' }} need{{ 's' if due_count == 1 else '' }} re-verification</strong>
+  <p>An instrument with an expired certificate must not be used in trade. Request a visit below.</p></div></div>
+{% endif %}
+
+<section class="panel" aria-labelledby="h-certs">
+  <h2 id="h-certs">Certificates</h2>
+  <div class="body">
+  {% if rows %}
+    <div class="tbl"><table>
+      <thead><tr><th scope="col">Certificate</th><th scope="col">Serial number</th><th scope="col">Instrument</th><th scope="col">Expires on</th><th scope="col">Status today</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+      <tbody>{% for row, r in rows %}<tr>
+        <th scope="row"><a href="{{ url_for('verify', code=row.code) }}">{{ row.code }}</a></th>
+        <td>{{ row.serial_number }}</td><td>{{ row.instrument_type }}</td><td>{{ row.expiry_date|nice }}</td>
+        <td>{% set tone = 'ok' if r.status == 'VALID' else ('warn' if r.status == 'EXPIRING SOON' else 'bad') %}<span class="badge {{ tone }}">{{ '✓' if tone == 'ok' else ('!' if tone == 'warn' else '✕') }} {{ r.status|title }}</span>{% if r.days is not none and r.status in ('VALID', 'EXPIRING SOON') %} <span class="field-hint">{{ r.days }} days left</span>{% endif %}</td>
+        <td class="nowrap"><a href="{{ url_for('certificate', code=row.code) }}">Print</a>
+          {% if r.status in ('EXPIRING SOON', 'EXPIRED') %} · <a href="{{ url_for('applications.apply', serial=row.serial_number, type=row.instrument_type, state_code=row.state_code) }}">Request re-verification</a>{% endif %}</td>
+      </tr>{% endfor %}</tbody>
+    </table></div>
+  {% else %}<p class="empty">No certificates in your firm's name yet.</p>{% endif %}
+  </div>
+</section>
+
+<section class="panel" aria-labelledby="h-req">
+  <h2 id="h-req">My requests</h2>
+  <div class="body">
+  {% if requests %}
+    <div class="tbl"><table>
+      <thead><tr><th scope="col">Reference</th><th scope="col">Sent</th><th scope="col">Serial number</th><th scope="col">Instrument</th><th scope="col">Progress</th></tr></thead>
+      <tbody>{% for a in requests %}<tr>
+        <th scope="row">{{ a.reference }}</th><td>{{ a.created_at }}</td><td>{{ a.serial_number }}</td><td>{{ a.instrument_type }}</td>
+        <td>{% if a.status == 'issued' %}<span class="badge ok">✓ Certificate issued</span> <a href="{{ url_for('verify', code=a.certificate_code) }}">{{ a.certificate_code }}</a>
+            {% elif a.status == 'declined' %}<span class="badge bad">✕ Declined</span> {{ a.decision_note }}
+            {% else %}<span class="badge warn">… Waiting for an officer</span>{% endif %}</td>
+      </tr>{% endfor %}</tbody>
+    </table></div>
+  {% else %}<p class="empty">You have not sent any requests.</p>{% endif %}
+  <div class="actions"><a class="btn" href="{{ url_for('applications.apply') }}">Request a verification visit</a></div>
+  </div>
+</section>
+<p class="note">This prototype does not send reminders by SMS or email yet. Check this page, or ask the office to contact you.</p>
+{% endblock %}

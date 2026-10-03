@@ -52,11 +52,15 @@
     <li><a href="{{ url_for('reminders') }}" {% if active == 'reminders' %}aria-current="page"{% endif %}>Re-verification due</a></li>
     {% if me.role == 'admin' %}<li><a href="{{ url_for('auth.audit_log') }}" {% if active == 'audit' %}aria-current="page"{% endif %}>Audit log</a></li>
     <li><a href="{{ url_for('health') }}" {% if active == 'health' %}aria-current="page"{% endif %}>System health</a></li>{% endif %}
+    {% elif me and me.role == 'trader' %}
+    <li><a href="{{ url_for('applications.mine') }}" {% if active == 'my' %}aria-current="page"{% endif %}>My instruments</a></li>
+    <li><a href="{{ url_for('applications.apply') }}" {% if active == 'apply' %}aria-current="page"{% endif %}>Request verification</a></li>
+    <li><a href="{{ url_for('info', page='help') }}" {% if active == 'help' %}aria-current="page"{% endif %}>Help and contacts</a></li>
     {% else %}
     <li><a href="{{ url_for('auth.report') }}" {% if active == 'report' %}aria-current="page"{% endif %}>Report a problem</a></li>
     <li><a href="{{ url_for('offline') }}" {% if active == 'offline' %}aria-current="page"{% endif %}>Offline checker</a></li>
     <li><a href="{{ url_for('info', page='help') }}" {% if active == 'help' %}aria-current="page"{% endif %}>Help and contacts</a></li>
-    {% if not me %}<li><a href="{{ url_for('auth.login') }}" {% if active == 'login' %}aria-current="page"{% endif %}>Officer login</a></li>{% endif %}
+    {% if not me %}<li><a href="{{ url_for('auth.login') }}" {% if active == 'login' %}aria-current="page"{% endif %}>Log in</a></li>{% endif %}
     {% endif %}
   </ul></div>
 </nav>

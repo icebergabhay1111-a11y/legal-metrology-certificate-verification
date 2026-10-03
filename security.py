@@ -37,6 +37,7 @@ LIMITS = {
     "report": (5, 600),     # 5 public reports per 10 minutes per IP
     "lookup": (120, 60),    # status checks and searches
     "issue": (60, 60),
+    "apply": (10, 3600),    # 10 requests per hour per IP
 }
 
 _hits = defaultdict(deque)

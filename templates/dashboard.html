@@ -3,13 +3,14 @@
 {% block title %}Officer dashboard{% endblock %}
 {% block content %}
 <h1 class="title">Officer dashboard</h1>
-<p class="sub">{{ user.full_name }} · overview as on {{ today|nice }}. What needs action is at the top.</p>
+<p class="sub">{{ user.full_name }} · {{ state_name ~ ' · ' if state_name else 'All States · ' }}overview as on {{ today|nice }}. What needs action is at the top.</p>
 
 <section class="tiles" aria-label="Summary">
   <a class="tile bad" href="#fraud"><span class="n">{{ fraud_alerts|length }}</span>Fraud alerts</a>
   <a class="tile bad" href="#expired"><span class="n">{{ expired|length }}</span>Expired certificates</a>
   <a class="tile warn" href="#due"><span class="n">{{ due|length }}</span>Due for re-verification</a>
-  <a class="tile" href="#reports"><span class="n">{{ reports|length }}</span>Public reports</a>
+  <a class="tile" href="#applications"><span class="n">{{ applications|length }}</span>Requests from traders</a>
+  <a class="tile" href="#reports"><span class="n">{{ reports|length }}</span>Open public reports</a>
 </section>
 
 <div class="actions no-print top">
@@ -36,10 +37,38 @@
   </div>
 </section>
 
+<section class="panel" id="applications" aria-labelledby="h-app">
+  <h2 id="h-app">Requests from traders</h2>
+  <div class="body">
+  {% if applications %}
+    {% if request.args.get('decline_error') %}<p class="error" role="alert">Give a reason of at least 5 characters to decline {{ request.args.get('decline_error') }}.</p>{% endif %}
+    <div class="tbl"><table>
+      <thead><tr><th scope="col">Reference</th><th scope="col">Firm</th><th scope="col">Serial · instrument</th><th scope="col">Where</th><th scope="col">Action</th></tr></thead>
+      <tbody>{% for a in applications %}<tr>
+        <th scope="row">{{ a.reference }}<br><span class="field-hint">{{ a.created_at }}</span></th>
+        <td>{{ a.firm_name }}</td>
+        <td>{{ a.serial_number }}<br>{{ a.instrument_type }}</td>
+        <td>{{ a.address }}<br><span class="field-hint">{{ a.jurisdiction }}, {{ a.state_code }}</span>{% if a.note %}<br><span class="field-hint">Note: {{ a.note }}</span>{% endif %}</td>
+        <td>
+          <a class="btn small" href="{{ url_for('issue', application=a.reference) }}">Verify and issue</a>
+          <form class="inline-form" method="post" action="{{ url_for('applications.decline', reference=a.reference) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label class="visually-hidden" for="why-{{ a.reference }}">Reason for declining {{ a.reference }}</label>
+            <input id="why-{{ a.reference }}" name="reason" maxlength="300" placeholder="Reason, if declining">
+            <button class="btn alt small" type="submit">Decline</button>
+          </form>
+        </td>
+      </tr>{% endfor %}</tbody>
+    </table></div>
+  {% else %}<p class="empty">No requests waiting.</p>{% endif %}
+  </div>
+</section>
+
 <section class="panel" id="expired" aria-labelledby="h-exp">
   <h2 id="h-exp">Expired certificates</h2>
   <div class="body">
-  {% if expired %}{% with rows=expired, mode='expired', caption='Expired certificates' %}{% include "_cert_table.html" %}{% endwith %}
+  {% if expired %}{% with rows=expired[:10], mode='expired', caption='Expired certificates' %}{% include "_cert_table.html" %}{% endwith %}
+    {% if expired|length > 10 %}<p><a href="{{ url_for('reminders') }}">See all {{ expired|length }} expired certificates</a></p>{% endif %}
   {% else %}<p class="empty">No certificates have expired.</p>{% endif %}
   </div>
 </section>
@@ -47,20 +76,33 @@
 <section class="panel" id="due" aria-labelledby="h-due">
   <h2 id="h-due">Due for re-verification</h2>
   <div class="body">
-  {% if due %}{% with rows=due, mode='due', caption='Certificates due soon' %}{% include "_cert_table.html" %}{% endwith %}
+  {% if due %}{% with rows=due[:10], mode='due', caption='Certificates due soon' %}{% include "_cert_table.html" %}{% endwith %}
+    {% if due|length > 10 %}<p><a href="{{ url_for('reminders') }}">See all {{ due|length }} certificates falling due</a></p>{% endif %}
   {% else %}<p class="empty">Nothing falls due within any State's window.</p>{% endif %}
   </div>
 </section>
 
 <section class="panel" id="reports" aria-labelledby="h-rep">
-  <h2 id="h-rep">Public reports</h2>
+  <h2 id="h-rep">Open public reports</h2>
   <div class="body">
+  {% if request.args.get('close_error') %}<p class="error" role="alert">Write what was done (at least 5 characters) to close {{ request.args.get('close_error') }}.</p>{% endif %}
   {% if reports %}
     <div class="tbl"><table>
-      <thead><tr><th scope="col">Reference</th><th scope="col">Received</th><th scope="col">Serial number</th><th scope="col">What was reported</th><th scope="col">Status</th></tr></thead>
-      <tbody>{% for r in reports %}<tr><td>{{ r.reference or "—" }}</td><td>{{ r.at }}</td><td>{{ r.serial_number }}</td><td>{{ r.description }}</td><td>{{ r.status }}</td></tr>{% endfor %}</tbody>
+      <thead><tr><th scope="col">Reference</th><th scope="col">What was reported</th><th scope="col">Serial or ID</th><th scope="col">Close with outcome</th></tr></thead>
+      <tbody>{% for r in reports[:20] %}<tr>
+        <th scope="row">{{ r.reference or "—" }}<br><span class="field-hint">{{ r.at }}{% if r.state_code %} · {{ r.state_code }}{% else %} · State not given{% endif %}</span></th>
+        <td>{{ r.description }}</td>
+        <td>{% if r.serial_number %}<a href="{{ url_for('verify_search', code=r.serial_number) }}">{{ r.serial_number }}</a>{% else %}—{% endif %}</td>
+        <td><form class="inline-form" method="post" action="{{ url_for('auth.close_report', report_id=r.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label class="visually-hidden" for="outcome-{{ r.id }}">Outcome for {{ r.reference }}</label>
+          <input id="outcome-{{ r.id }}" name="outcome" maxlength="300" placeholder="What was done">
+          <button class="btn alt small" type="submit">Close</button>
+        </form></td>
+      </tr>{% endfor %}</tbody>
     </table></div>
-  {% else %}<p class="empty">No public reports.</p>{% endif %}
+    {% if reports|length > 20 %}<p class="field-hint">Showing the newest 20 of {{ reports|length }} open reports.</p>{% endif %}
+  {% else %}<p class="empty">No open reports.</p>{% endif %}
   </div>
 </section>
 {% endblock %}

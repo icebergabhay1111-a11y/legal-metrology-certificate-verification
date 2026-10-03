@@ -15,12 +15,17 @@
     <div class="body">
       {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <label class="first" for="serial_number">Serial number of the instrument</label>
-      <input id="serial_number" name="serial_number" autocomplete="off" maxlength="40" required value="{{ request.form.get('serial_number', '') }}">
-      <p class="field-hint">Usually on a metal plate or sticker on the instrument.</p>
-      <label for="description">What did you notice?</label>
+      <label class="first" for="serial_number">Serial number or certificate ID <span class="field-hint">(if you can see one)</span></label>
+      <input id="serial_number" name="serial_number" autocomplete="off" maxlength="40" aria-describedby="serial-hint" value="{{ request.form.get('serial_number', request.args.get('code', '')) }}">
+      <p class="field-hint" id="serial-hint">Usually on a metal plate or sticker on the instrument, or beside the certificate's QR code.</p>
+      <label for="state_code">State <span class="field-hint">(so the right office sees it)</span></label>
+      <select id="state_code" name="state_code">
+        <option value="">Not sure</option>
+        {% for code, sname in states %}<option value="{{ code }}" {% if request.form.get('state_code') == code %}selected{% endif %}>{{ sname }}</option>{% endfor %}
+      </select>
+      <label for="description">What did you notice, and where?</label>
       <textarea id="description" name="description" maxlength="2000" aria-describedby="desc-hint" required>{{ request.form.get('description', '') }}</textarea>
-      <p class="field-hint" id="desc-hint">Where it is, and what looked wrong. Please do not include your phone number or other personal details.</p>
+      <p class="field-hint" id="desc-hint">Name the shop or place and what looked wrong. Please do not include your phone number or other personal details.</p>
       <div class="actions"><button class="btn" type="submit">Submit report</button></div>
     </div>
   </form>

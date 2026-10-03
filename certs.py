@@ -116,18 +116,19 @@ def by_serial(serial, limit=20):
     return [(row, assess(row)) for row in rows]
 
 
-def due_and_expired():
+def due_and_expired(state_code=None):
     """Officer lists: (due within their State's window, already expired).
 
+    state_code limits the lists to one State (None = every State, for admins).
     Revoked certificates are left out: they need no re-verification reminder.
     """
     today = clock.today()
     rows = db.fetch_all("""
         SELECT code, serial_number, owner_name, instrument_type, expiry_date, state_code
         FROM certificates
-        WHERE revoked_at IS NULL
+        WHERE revoked_at IS NULL AND (CAST(:state AS TEXT) IS NULL OR state_code = :state)
         ORDER BY expiry_date ASC
-    """)
+    """, state=state_code)
     due, expired = [], []
     for row in rows:
         expiry = parse_date(row.expiry_date)
@@ -144,3 +145,16 @@ def due_and_expired():
         elif status == "EXPIRING SOON":
             due.append(item)
     return due, expired
+
+
+def for_firm(firm_name):
+    """A trader's view: every certificate in the firm's name, with today's status."""
+    rows = db.fetch_all(
+        f"SELECT {COLUMNS} FROM certificates WHERE LOWER(owner_name) = LOWER(:f) "
+        "ORDER BY expiry_date ASC", f=firm_name or "")
+    return [(row, assess(row)) for row in rows]
+
+
+def scope_for(user):
+    """The State an officer works in, or None for an admin (sees every State)."""
+    return None if user["role"] == "admin" else user.get("state_code")

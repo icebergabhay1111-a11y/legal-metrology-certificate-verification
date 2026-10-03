@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Request verification{% endblock %}
+{% block content %}
+<p class="crumbs"><a href="{{ url_for('applications.mine') }}">My instruments</a> › Request verification</p>
+<h1 class="title">Request a verification visit</h1>
+<p class="sub">Ask the Legal Metrology office to verify an instrument for <strong>{{ user.firm_name }}</strong>. An officer checks it in person; the certificate is issued only after that check.</p>
+
+{% if problems %}
+<div class="error" role="alert"><p class="tight">Please correct {{ problems|length }} field{{ '' if problems|length == 1 else 's' }}:</p>
+  <ul>{% for name, msg in problems.items() %}<li><a href="#{{ name }}">{{ msg }}</a></li>{% endfor %}</ul></div>
+{% endif %}
+
+<form class="panel" action="{{ url_for('applications.apply') }}" method="get">
+  <h2>State</h2>
+  <div class="body row-form">
+    <div>
+      <label class="first" for="state_pick">State where the instrument is</label>
+      <select id="state_pick" name="state_code">
+        {% for code, sname in states %}<option value="{{ code }}" {% if code == selected_state %}selected{% endif %}>{{ sname }}</option>{% endfor %}
+      </select>
+    </div>
+    <input type="hidden" name="serial" value="{{ values.get('serial_number', '') }}">
+    <button class="btn alt" type="submit">Use this State</button>
+  </div>
+</form>
+
+<form class="panel" action="{{ url_for('applications.apply') }}" method="post" novalidate>
+  <h2>Instrument</h2>
+  <div class="body">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="state_code" value="{{ selected_state }}">
+    <div class="grid2">
+      <div>
+        <label for="serial_number">Serial number</label>
+        <input id="serial_number" name="serial_number" maxlength="40" required value="{{ values.get('serial_number', '') }}" aria-describedby="serial-hint{% if problems.serial_number %} serial_number-error{% endif %}"{% if problems.serial_number %} aria-invalid="true"{% endif %}>
+        <p class="field-hint" id="serial-hint">On the metal plate or sticker on the instrument.</p>
+        {% if problems.serial_number %}<p class="field-error" id="serial_number-error">{{ problems.serial_number }}</p>{% endif %}
+      </div>
+      <div>
+        <label for="instrument_type">Type of instrument</label>
+        <select id="instrument_type" name="instrument_type" required{% if problems.instrument_type %} aria-invalid="true" aria-describedby="instrument_type-error"{% endif %}>
+          <option value="">Choose a type</option>
+          {% for iname, months in instrument_types %}<option value="{{ iname }}" {% if iname == values.get('instrument_type') %}selected{% endif %}>{{ iname }}</option>{% endfor %}
+        </select>
+        {% if problems.instrument_type %}<p class="field-error" id="instrument_type-error">{{ problems.instrument_type }}</p>{% endif %}
+      </div>
+      <div>
+        <label for="jurisdiction">District</label>
+        <select id="jurisdiction" name="jurisdiction" required{% if problems.jurisdiction %} aria-invalid="true" aria-describedby="jurisdiction-error"{% endif %}>
+          <option value="">Choose a district</option>
+          {% for place in jurisdictions %}<option value="{{ place }}" {% if place == values.get('jurisdiction') %}selected{% endif %}>{{ place }}</option>{% endfor %}
+        </select>
+        {% if problems.jurisdiction %}<p class="field-error" id="jurisdiction-error">{{ problems.jurisdiction }}</p>{% endif %}
+      </div>
+      <div>
+        <label for="address">Address of the instrument</label>
+        <input id="address" name="address" maxlength="200" required autocomplete="street-address" value="{{ values.get('address', '') }}"{% if problems.address %} aria-invalid="true" aria-describedby="address-error"{% endif %}>
+        {% if problems.address %}<p class="field-error" id="address-error">{{ problems.address }}</p>{% endif %}
+      </div>
+    </div>
+    <label for="note">Anything the officer should know <span class="field-hint">(optional)</span></label>
+    <textarea id="note" name="note" maxlength="500">{{ values.get('note', '') }}</textarea>
+    <div class="actions"><button class="btn" type="submit">Send request</button></div>
+  </div>
+</form>
+{% endblock %}
