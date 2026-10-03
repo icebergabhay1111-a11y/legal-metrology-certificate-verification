@@ -35,6 +35,9 @@
   <strong>NOT FOUND</strong>
   <p>No certificate with this ID exists in this system. Check the ID. If the certificate looks genuine, it may be forged: please report it.</p></div></div>
 {% endif %}
+{% if certificate and status in ('VALID', 'EXPIRING SOON', 'EXPIRED') %}
+<p class="check-plate"><strong>Check the instrument:</strong> its serial number plate should read <strong>{{ certificate.serial_number }}</strong>. If it does not, this certificate belongs to a different instrument — please report it.</p>
+{% endif %}
 {% if result_code %}<p class="src">Result code {{ result_code }}</p>{% endif %}
 
 {% if certificate %}
@@ -104,7 +107,7 @@
 <section class="panel" aria-labelledby="h-next">
   <h2 id="h-next">What to do now</h2>
   <div class="body">
-    <p><a href="{{ url_for('auth.report') }}">Report this certificate</a>. Officers see every report on their dashboard.</p>
+    <p><a href="{{ url_for('auth.report', code=certificate.code if certificate else searched) }}">Report this certificate</a>. Officers see every report on their dashboard.</p>
     {% set entries = (contacts or []) + national_contacts %}
     {% include "_contacts.html" %}
   </div>

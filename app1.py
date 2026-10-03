@@ -56,10 +56,12 @@ import errors        # noqa: E402
 import fraud         # noqa: E402
 import security      # noqa: E402
 import signing       # noqa: E402
+import applications  # noqa: E402
 
 security.init_app(app, production=IS_PRODUCTION)
 errors.init_app(app)
 app.register_blueprint(auth.auth_bp)
+app.register_blueprint(applications.bp)
 db.upgrade_to_latest()      # create or update every table - see migrations/
 auth.ensure_demo_users()    # demo logins exist after every deploy - see auth.py
 
@@ -182,7 +184,7 @@ def verify(code):
     row = certs.find(normal)
     if row is None:
         g.no_store = True
-        return render_template("verify.html", certificate=None, status="NOT FOUND",
+        return render_template("verify.html", certificate=None, status="NOT FOUND", searched=(normal or code)[:40],
                                result_code="LM-101", checked_on=today.isoformat(),
                                contacts=config.contacts_for(None)), 404
     g.no_store = True       # a status is today's; no shared cache may keep it
@@ -207,9 +209,15 @@ def validity_timeline(row, today, status):
 
 
 def _can_revoke(row):
-    """Show the revoke form only to district officers and admins, on live records."""
+    """Show the revoke form only to district officers of that State and admins, on live records."""
     user = current_user()
-    return bool(user and user["role"] in REVOKERS and not row.revoked_at)
+    return bool(user and user["role"] in REVOKERS and not row.revoked_at and _in_scope(user, row.state_code))
+
+
+def _in_scope(user, state_code):
+    """True if this officer may act on records of this State (admins: every State)."""
+    scope = certs.scope_for(user)
+    return scope is None or scope == state_code
 
 
 INFO_PAGES = ("help", "accessibility", "privacy", "terms")
@@ -280,15 +288,29 @@ def issue():
     """Officer form for issuing a certificate."""
     user = current_user()
     picked = request.args.get("state_code", "").upper()
-    state_code = picked if picked in config.STATES else (user.get("state_code") or config.DEFAULT_STATE)
-    return _issue_form(state_code, {}, {})
+    own = user.get("state_code") or config.DEFAULT_STATE
+    # Only an admin may issue for another State; an officer works in their own.
+    state_code = picked if (picked in config.STATES and user["role"] == "admin") else own
+    values = {}
+    application = applications.prefill(request.args.get("application", ""), user)
+    if application:
+        state_code = application["state_code"]
+        values = application
+    return _issue_form(state_code, values, {})
 
 
 def _issue_form(state_code, values, problems, status=200):
     """Render the issue form, keeping what was typed and showing each problem by its field."""
+    user = current_user()
+    if state_code not in config.STATES or (user["role"] != "admin" and state_code != user.get("state_code")):
+        state_code = user.get("state_code") or config.DEFAULT_STATE     # never render rules for a State they cannot use
+    if user["role"] == "admin":
+        states = config.state_choices()
+    else:
+        states = [(c, n) for c, n in config.state_choices() if c == state_code]
     return render_template(
         "form.html", instrument_types=config.instrument_types(state_code),
-        states=config.state_choices(), jurisdictions=config.jurisdictions(state_code),
+        states=states, jurisdictions=config.jurisdictions(state_code),
         selected_state=state_code, today=clock.today().isoformat(), values=values,
         problems=problems, period_note=PERIOD_SOURCE_NOTE,
     ), status
@@ -301,6 +323,7 @@ def read_issue_form(form, officer):
                "max_permissible_error", "verification_date", "state_code", "jurisdiction")}
     values["serial_number"] = certs.normalise_serial(values["serial_number"])
     values["state_code"] = values["state_code"].upper() or officer.get("state_code") or config.DEFAULT_STATE
+    values["application"] = form.get("application", "").strip()[:20]
     problems = {}
     for name, limit in FIELD_LIMITS.items():
         if len(values[name]) > limit:
@@ -313,6 +336,8 @@ def read_issue_form(form, officer):
         problems["owner_name"] = ("LM-306", "Owner name is required.")
     if values["state_code"] not in config.STATES:
         problems["state_code"] = ("LM-303", errors.message("LM-303"))
+    elif officer["role"] != "admin" and values["state_code"] != officer.get("state_code"):
+        problems["state_code"] = ("LM-308", errors.message("LM-308"))
     elif not values["instrument_type"]:
         problems["instrument_type"] = ("LM-306", "Choose an instrument type.")
     elif values["instrument_type"] not in dict(config.instrument_types(values["state_code"])):
@@ -346,6 +371,7 @@ def submit():
     code = create_certificate(values, officer)
     audit_log("certificate issued", target=code,
               detail=f"serial {values['serial_number']}, owner {values['owner_name']}")
+    applications.mark_issued(request.form.get("application", ""), code, officer)
     # Post/Redirect/Get: refreshing the next page cannot issue a duplicate.
     return redirect(url_for("certificate", code=code, issued=1))
 
@@ -426,12 +452,19 @@ def _fraud_checks(conn, code, values, verified, expires, officer):
 
 
 @app.route("/certificate/<code>")
-@role_required(*OFFICERS)
+@role_required(*OFFICERS, "trader")
 def certificate(code):
-    """Printable certificate with its QR code. Can be reprinted any time."""
+    """Printable certificate with its QR code: for officers of its State, and the firm it belongs to."""
     row = certs.find(certs.normalise_code(code))
     if row is None:
         abort(404)
+    user = current_user()
+    if user["role"] == "trader":
+        allowed = (row.owner_name or "").lower() == (user.get("firm_name") or "").lower() != ""
+    else:
+        allowed = _in_scope(user, row.state_code)
+    if not allowed:
+        abort(403)
     g.no_store = True
     text = qr_text(row)
     return render_template("certificate.html", c=row, qr_code=qr_data_uri(text),
@@ -446,6 +479,8 @@ def revoke(code):
     row = certs.find(certs.normalise_code(code))
     if row is None:
         abort(404)
+    if not _in_scope(current_user(), row.state_code):
+        abort(403)
     reason = " ".join(request.form.get("reason", "").split())[:300]
     if row.revoked_at:
         return redirect(url_for("verify", code=row.code))
@@ -471,7 +506,7 @@ def revoke(code):
 @role_required(*OFFICERS)
 def reminders():
     """What has lapsed and what falls due inside each State's window."""
-    due, expired = certs.due_and_expired()
+    due, expired = certs.due_and_expired(certs.scope_for(current_user()))
     return render_template("reminders.html", due=due, expired=expired,
                            today=clock.today().isoformat(), windows=config.reminder_windows())
 

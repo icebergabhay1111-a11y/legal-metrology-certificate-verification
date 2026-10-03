@@ -12,6 +12,9 @@
 <h1 class="title">Issue a verification certificate</h1>
 <p class="sub">Record an instrument you have verified. The system works out the expiry date from the instrument type and the State's rules; it cannot be typed in.</p>
 
+{% if values.get('application') %}
+<p class="success" role="status">Filled in from request <strong>{{ values.application }}</strong> by {{ values.owner_name }}{% if values.address %}, at {{ values.address }}{% endif %}.{% if values.note %} Note: {{ values.note }}{% endif %} Check every detail against the instrument before issuing.</p>
+{% endif %}
 {% if problems %}
 <div class="error" role="alert">
   <p class="tight">Please correct {{ problems|length }} field{{ '' if problems|length == 1 else 's' }}:</p>
@@ -19,6 +22,7 @@
 </div>
 {% endif %}
 
+{% if states|length > 1 %}
 <form class="panel" action="{{ url_for('issue') }}" method="get">
   <h2>State or Union Territory</h2>
   <div class="body row-form">
@@ -34,12 +38,16 @@
     <button class="btn alt" type="submit">Use this State</button>
   </div>
 </form>
+{% else %}
+<p class="sub">Issuing under the rules of <strong>{{ states[0][1] }}</strong>, your State.</p>
+{% endif %}
 
 <form class="panel" action="{{ url_for('submit') }}" method="post" novalidate>
   <h2>Instrument and owner</h2>
   <div class="body">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="state_code" value="{{ selected_state }}">
+    {% if values.get('application') %}<input type="hidden" name="application" value="{{ values.application }}">{% endif %}
     {% set name = 'state_code' %}{% include "_field_error.html" %}
     <div class="grid2">
       <div>

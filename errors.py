@@ -43,6 +43,7 @@ CODES = {
     "LM-302": ("Instrument type unknown", "This instrument type is not configured for the selected State."),
     "LM-303": ("State not configured", "This State is not yet on the system."),
     "LM-306": ("Missing or invalid field", "A required field is missing or not valid."),
+    "LM-308": ("Outside your State", "Officers may issue only for their own State."),
     # the software or the request
     "SYS-501": ("Service unavailable", "The service is temporarily unavailable. Please try again in a few minutes."),
     "SYS-502": ("Signing key missing", "The signing key is not configured."),

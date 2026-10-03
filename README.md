@@ -15,12 +15,14 @@ and a record here is not a legal certificate.**
 | **Signed records** | Each certificate is signed with Ed25519 at issue. If a stored field is edited later, the page says NOT VERIFIED. Keys carry an id, so rotating the key keeps old certificates verifiable. |
 | **Offline checking** | The QR also carries the signed fields. The offline checker (`/offline`, installable on a phone) verifies the signature with no network, and says plainly that revocation cannot be checked offline. |
 | **Revocation** | District officers and admins can revoke a certificate with a reason; it then reads REVOKED. |
+| **Traders** | A trader sees every certificate in their firm's name with today's status, prints them, and requests a verification visit. The request reaches the officers of that State, who verify and issue from it (the form is filled in) or decline with a reason the trader sees. |
+| **One State per officer** | Officers see and act on their own State only: issuing, revoking, due lists, requests and public reports. The admin sees every State. Eight States are configured (Tamil Nadu, Delhi, Mizoram, Maharashtra, Karnataka, Gujarat, Uttar Pradesh, Kerala). |
 | **Four fraud checks at issue** | Same serial with a different owner (LM-201), officer outside their district (LM-202), more certificates in a day than the State allows (LM-206), a lapsed instrument moved to a new owner without re-verification (LM-207). A check raises an alert; it does not block. |
 | **Per-State rules** | Periods, districts, reminder window and daily limit live in `states/XX.json`. A new State is a new file. Fee figures in those files are placeholders and say so. |
 | **Accountability** | Four roles, a named officer on every certificate, and a hash-chained audit log that shows if a past entry was edited or deleted. |
 | **Stable error codes** | Every result and error has a code (`LM-` for the domain, `SYS-` for the software) and every response a request id. See `errors.py`. |
 
-What it does **not** do yet: send reminders to holders, take applications from traders, collect fees,
+What it does **not** do yet: send reminders by SMS or email, collect fees,
 or use a Digital Signature Certificate under the IT Act. The interface is English only.
 
 ## Run it
@@ -32,7 +34,7 @@ python seed_demo.py --demo          # the four walkthrough certificates (CERT-00
 python app1.py                      # http://127.0.0.1:5050
 ```
 
-Local demo logins (`lab1`, `district1`, `admin1`, `trader1`, `mz1`) use the password `sahidaam2026`.
+Local demo logins (`lab1`, `district1`, `admin1`, `trader1`, `mz1`, and the team officers `anikeit`, `abhay`, `anvita`, `krishna`, `shreyash`, `vaibhavi`) use the password `sahidaam2026`.
 That password is refused when `APP_ENV=production`; the live site uses its own passwords.
 
 `python seed_demo.py --reset` generates about 900 certificates spread across every status, with fraud
@@ -44,6 +46,7 @@ cases and near misses. All names end in "(sample)".
 |---|---|
 | `app1.py` | Start-up, public pages, officer pages, issuing |
 | `auth.py` | Login, roles, audit log, dashboard, public reports |
+| `applications.py` | The trader's page and verification requests |
 | `certs.py` | Certificate codes, status rules, lookups |
 | `signing.py` | Ed25519 signing with key ids; `retired_keys.json` holds old public keys |
 | `fraud.py` | The four fraud rules, as pure functions |

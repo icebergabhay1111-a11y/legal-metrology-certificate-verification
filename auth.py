@@ -22,11 +22,12 @@ import hashlib
 import os
 import secrets
 
-from flask import Blueprint, g, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, g, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
 import certs
 import clock
+import config
 import db
 import security
 
@@ -36,12 +37,25 @@ OFFICERS = ("lab_officer", "district_officer", "admin")
 auth_bp = Blueprint("auth", __name__)
 
 DEMO_USERS = [
-    # username, env var for pw, full name, role, state, jurisdiction ("" = whole State)
-    ("trader1",   "PW_TRADER",   "Ramesh Trader",           "trader",           "TN", "Chennai"),
-    ("lab1",      "PW_LAB",      "Priya Lab Officer",       "lab_officer",      "TN", "Chennai"),
-    ("district1", "PW_DISTRICT", "Suresh District Officer", "district_officer", "TN", "Chennai"),
-    ("admin1",    "PW_ADMIN",    "Admin User",              "admin",            "TN", ""),
-    ("mz1",       "PW_MZ",       "Lalrin Lab Officer",      "lab_officer",      "MZ", "Aizawl"),
+    # username, env var for pw, full name, role, State, jurisdiction ("" = whole State), firm (traders)
+    ("trader1",   "PW_TRADER",   "Ramesh Trader",           "trader",           "TN", "Chennai", "Sharma Weighbridge Co. (sample)"),
+    ("lab1",      "PW_LAB",      "Priya Lab Officer",       "lab_officer",      "TN", "Chennai", ""),
+    ("district1", "PW_DISTRICT", "Suresh District Officer", "district_officer", "TN", "Chennai", ""),
+    ("admin1",    "PW_ADMIN",    "Admin User",              "admin",            "TN", "",        ""),
+    ("mz1",       "PW_MZ",       "Lalrin Lab Officer",      "lab_officer",      "MZ", "Aizawl",  ""),
+]
+
+# One demo officer per team member, each in a different State. They share
+# one password, from TEAM_PASSWORD (in production the accounts are not made
+# without it). First names only, marked "demo", so no one reads them as
+# real Government officers.
+TEAM_OFFICERS = [
+    ("anikeit",  "Anikeit (demo officer)",  "TN", "Madurai"),
+    ("abhay",    "Abhay (demo officer)",    "MH", "Pune"),
+    ("anvita",   "Anvita (demo officer)",   "KA", "Bengaluru Urban"),
+    ("krishna",  "Krishna (demo officer)",  "GJ", "Ahmedabad"),
+    ("shreyash", "Shreyash (demo officer)", "UP", "Lucknow"),
+    ("vaibhavi", "Vaibhavi (demo officer)", "KL", "Ernakulam"),
 ]
 DEFAULT_DEMO_PASSWORD = "sahidaam2026"
 
@@ -52,7 +66,10 @@ _DUMMY_HASH = generate_password_hash(secrets.token_hex(16))
 
 def ensure_demo_users():
     """Create any missing demo account. Never changes an existing one."""
-    for username, env_var, full_name, role, state_code, jurisdiction in DEMO_USERS:
+    accounts = list(DEMO_USERS)
+    for username, full_name, state_code, place in TEAM_OFFICERS:
+        accounts.append((username, "TEAM_PASSWORD", full_name, "district_officer", state_code, place, ""))
+    for username, env_var, full_name, role, state_code, jurisdiction, firm in accounts:
         if db.fetch_one("SELECT id FROM users WHERE username = :u", u=username):
             continue
         password = os.environ.get(env_var)
@@ -61,10 +78,10 @@ def ensure_demo_users():
             print(f"WARNING: {env_var} not set - account '{username}' not created.")
             continue
         db.run(
-            """INSERT INTO users (username, password_hash, full_name, role, state_code, jurisdiction)
-               VALUES (:u, :h, :name, :role, :state, :jur)""",
+            """INSERT INTO users (username, password_hash, full_name, role, state_code, jurisdiction, firm_name)
+               VALUES (:u, :h, :name, :role, :state, :jur, :firm)""",
             u=username, h=generate_password_hash(password or DEFAULT_DEMO_PASSWORD),
-            name=full_name, role=role, state=state_code, jur=jurisdiction,
+            name=full_name, role=role, state=state_code, jur=jurisdiction, firm=firm or None,
         )
 
 
@@ -124,6 +141,7 @@ def current_user():
         "role": session.get("role"),
         "state_code": session.get("state_code"),
         "jurisdiction": session.get("jurisdiction") or "",
+        "firm_name": session.get("firm_name") or "",
     }
 
 
@@ -167,15 +185,21 @@ def login():
     session.clear()
     session.permanent = True
     session.update(user_id=row.id, username=row.username, full_name=row.full_name,
-                   role=row.role, state_code=row.state_code, jurisdiction=row.jurisdiction or "")
+                   role=row.role, state_code=row.state_code, jurisdiction=row.jurisdiction or "",
+                   firm_name=row.firm_name or "")
     log("login", target=username)
-    return redirect(safe_next(request.args.get("next")))
+    return redirect(safe_next(request.args.get("next"), row.role))
 
 
-def safe_next(target):
-    """Only follow ?next= to a page on this site, never to another website."""
+def safe_next(target, role=None):
+    """Only follow ?next= to a page on this site, never to another website.
+
+    With no ?next=, a trader lands on their own page and an officer on the dashboard.
+    """
     if target and target.startswith("/") and not target.startswith("//") and "\\" not in target:
         return target
+    if role == "trader":
+        return url_for("applications.mine")
     return url_for("auth.dashboard")
 
 
@@ -195,23 +219,39 @@ def logout():
 def report():
     """Anyone can report a suspect instrument; they get a reference to quote."""
     if request.method != "POST":       # GET and HEAD just show the form
-        return render_template("report.html", submitted=False, error=None)
+        return render_template("report.html", submitted=False, error=None, states=config.state_choices())
     security.rate_limit("report")
     serial_number = certs.normalise_serial(request.form.get("serial_number", ""))
     description = " ".join(request.form.get("description", "").split())
     error = None
-    if not serial_number or not description:
-        error = "Serial number and description are both required."
+    if len(description) < 10:
+        error = "Describe what you noticed and where, in at least a few words."
     elif len(serial_number) > 40 or len(description) > 2000:
         error = "Keep the serial number under 40 characters and the description under 2,000."
+    state_code = request.form.get("state_code", "").upper()
+    if state_code and state_code not in config.STATES:
+        error = "Choose a State from the list."
     if error:
-        return render_template("report.html", submitted=False, error=error), 400
+        return render_template("report.html", submitted=False, error=error, states=config.state_choices()), 400
+    if not state_code:
+        state_code = _state_of(serial_number)
     reference = "R-" + certs.new_code()[3:]
-    db.run("INSERT INTO reports (at, serial_number, description, reference) "
-           "VALUES (:at, :serial, :text, :ref)",
-           at=clock.stamp(), serial=serial_number, text=description, ref=reference)
+    db.run("INSERT INTO reports (at, serial_number, description, reference, state_code) "
+           "VALUES (:at, :serial, :text, :ref, :state)",
+           at=clock.stamp(), serial=serial_number, text=description, ref=reference, state=state_code)
     log("public report received", target=serial_number, detail=f"{reference}: {description[:200]}")
     return render_template("report.html", submitted=True, error=None, reference=reference)
+
+
+def _state_of(text):
+    """The State of the certificate a report names (by ID or serial), or None."""
+    if not text:
+        return None
+    row = certs.find(certs.normalise_code(text))
+    if row is None:
+        matches = certs.by_serial(text, limit=1)
+        row = matches[0][0] if matches else None
+    return row.state_code if row else None
 
 
 # ============================================================
@@ -222,14 +262,23 @@ def report():
 @role_required(*OFFICERS)
 def dashboard():
     """What needs action first: fraud alerts, expired, due soon, public reports."""
-    due, expired = certs.due_and_expired()
-    reports = db.fetch_all("SELECT id, at, serial_number, description, status, reference "
-                           "FROM reports ORDER BY id DESC LIMIT 100")
-    fraud_alerts = db.fetch_all("SELECT id, at, code, certificate_code, serial_number, officer_name, "
-                                "reason, status FROM fraud_alerts ORDER BY id DESC LIMIT 50")
+    user = current_user()
+    scope = certs.scope_for(user)
+    due, expired = certs.due_and_expired(scope)
+    pending = applications_for(scope)
+    # Open reports for this State, plus any whose State is unknown.
+    reports = db.fetch_all(
+        "SELECT id, at, serial_number, description, status, reference, state_code FROM reports "
+        "WHERE status = 'open' AND (CAST(:state AS TEXT) IS NULL OR state_code = :state OR state_code IS NULL) "
+        "ORDER BY id DESC", state=scope)
+    fraud_alerts = db.fetch_all(
+        "SELECT f.id, f.at, f.code, f.certificate_code, f.serial_number, f.officer_name, f.reason, f.status "
+        "FROM fraud_alerts f JOIN certificates c ON c.code = f.certificate_code "
+        "WHERE CAST(:state AS TEXT) IS NULL OR c.state_code = :state ORDER BY f.id DESC LIMIT 50", state=scope)
     return render_template("dashboard.html", today=clock.today().isoformat(), due=due,
                            expired=expired, reports=reports, fraud_alerts=fraud_alerts,
-                           user=current_user())
+                           applications=pending, user=user, scope=scope,
+                           state_name=config.state(scope).get("state_name") if scope else None)
 
 
 @auth_bp.route("/admin/audit")
@@ -240,3 +289,30 @@ def audit_log():
                            "ORDER BY id DESC LIMIT 200")
     intact, broken_at = check_audit_chain()
     return render_template("audit.html", entries=entries, intact=intact, broken_at=broken_at)
+
+
+def applications_for(state_code):
+    """Open verification applications for an officer's State (None = all)."""
+    return db.fetch_all(
+        "SELECT * FROM applications WHERE status = 'submitted' AND "
+        "(CAST(:state AS TEXT) IS NULL OR state_code = :state) ORDER BY id", state=state_code)
+
+
+@auth_bp.route("/reports/<int:report_id>/close", methods=["POST"])
+@role_required(*OFFICERS)
+def close_report(report_id):
+    """Close a public report with what was done, so it leaves the open list."""
+    user = current_user()
+    row = db.fetch_one("SELECT id, reference, state_code, status FROM reports WHERE id = :i", i=report_id)
+    if row is None:
+        abort(404)
+    scope = certs.scope_for(user)
+    if scope is not None and row.state_code not in (None, scope):
+        abort(403)
+    outcome = " ".join(request.form.get("outcome", "").split())[:300]
+    if len(outcome) < 5 or row.status != "open":
+        return redirect(url_for("auth.dashboard", close_error=row.reference) + "#reports")
+    db.run("UPDATE reports SET status = 'closed', closed_by = :by, closed_at = :at, outcome = :o "
+           "WHERE id = :i AND status = 'open'", by=user["full_name"], at=clock.stamp(), o=outcome, i=report_id)
+    log("public report closed", target=row.reference, detail=outcome)
+    return redirect(url_for("auth.dashboard") + "#reports")

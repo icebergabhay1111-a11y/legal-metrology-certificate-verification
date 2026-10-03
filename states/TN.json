@@ -33,5 +33,6 @@
   },
   "fee_source": "PLACEHOLDER - not yet verified against a published Tamil Nadu fee schedule. Krishna to replace or mark unverified aloud.",
   "contacts": [],
-  "contacts_note": "Add an entry only with a source and a verified_on date (YYYY-MM-DD). The test suite rejects an unsourced number. Leave empty rather than guess."
+  "contacts_note": "Add an entry only with a source and a verified_on date (YYYY-MM-DD). The test suite rejects an unsourced number. Leave empty rather than guess.",
+  "settings_note": "Reminder window and daily issue limit are illustrative settings chosen by the team, not taken from this State's rules."
 }

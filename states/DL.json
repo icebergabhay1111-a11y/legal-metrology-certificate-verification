@@ -33,5 +33,6 @@
   },
   "fee_source": "PLACEHOLDER - not yet verified against the Delhi published fee schedule. Revenue context (verified): Delhi collected Rs 10.39 crore under Major Head 1475 / Minor Head 106 in 2023-24 - GNCTD Receipts Budget 2025-26, page 17.",
   "contacts": [],
-  "contacts_note": "Add an entry only with a source and a verified_on date (YYYY-MM-DD). The test suite rejects an unsourced number. Leave empty rather than guess."
+  "contacts_note": "Add an entry only with a source and a verified_on date (YYYY-MM-DD). The test suite rejects an unsourced number. Leave empty rather than guess.",
+  "settings_note": "Reminder window and daily issue limit are illustrative settings chosen by the team, not taken from this State's rules."
 }

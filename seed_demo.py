@@ -76,7 +76,7 @@ WALKTHROUGH = ["CERT-0001", "CERT-0002", "CERT-0003", "CERT-0004"]
 def wipe():
     """Delete every certificate, alert, report and audit row, and seeded officers."""
     with db.engine.begin() as conn:
-        for table in ("fraud_alerts", "certificates", "reports", "audit"):
+        for table in ("fraud_alerts", "certificates", "reports", "audit", "applications"):
             conn.execute(db.text(f"DELETE FROM {table}"))
         conn.execute(db.text("DELETE FROM users WHERE username LIKE 'seed\\_%' ESCAPE '\\'"))
 
@@ -94,7 +94,11 @@ def make_officers():
 
 
 def _officer(username, full_name, role, state_code, place):
-    """Insert one officer account and return it in the shape current_user() gives."""
+    """Insert one officer account (or reuse it) and return it in the shape current_user() gives."""
+    row = db.fetch_one("SELECT id FROM users WHERE username = :u", u=username)
+    if row:
+        return {"id": row.id, "username": username, "full_name": full_name, "role": role,
+                "state_code": state_code, "jurisdiction": place}
     db.run("INSERT INTO users (username, password_hash, full_name, role, state_code, jurisdiction) "
            "VALUES (:u, :h, :n, :r, :s, :j)", u=username, h=generate_password_hash(SEED_PASSWORD, "pbkdf2"),
            n=full_name, r=role, s=state_code, j=place)
@@ -168,6 +172,7 @@ def seed_full():
         issue(officer, serial, owner, itype, older)
     seed_fraud(officers, firms)
     seed_reports_and_revocations(officers)
+    seed_request()
 
 
 def seed_fraud(officers, firms):
@@ -200,10 +205,10 @@ def seed_reports_and_revocations(officers):
     """25 public reports (10 closed) and 3 revoked certificates."""
     texts = ["Display flickers and reading jumps", "Seal looks broken", "Pump seems to deliver short",
              "Certificate on the wall looks photocopied", "Weights look filed down"]
-    rows = db.fetch_all("SELECT serial_number FROM certificates ORDER BY id LIMIT 25")
+    rows = db.fetch_all("SELECT serial_number, state_code FROM certificates ORDER BY id LIMIT 25")
     for n, row in enumerate(rows):
-        db.run("INSERT INTO reports (at, serial_number, description, reference, status) "
-               "VALUES (:at, :s, :d, :r, :st)", at=clock.stamp(), s=row.serial_number,
+        db.run("INSERT INTO reports (at, serial_number, description, reference, status, state_code) "
+               "VALUES (:at, :s, :d, :r, :st, :state)", at=clock.stamp(), s=row.serial_number, state=row.state_code,
                d=texts[n % len(texts)] + " (sample report)", r=f"R-SEED-{n + 1:03d}",
                st="closed" if n < 10 else "open")
     for row in db.fetch_all("SELECT code FROM certificates WHERE serial_number LIKE 'EW-F21%' ORDER BY code LIMIT 3"):
@@ -226,6 +231,21 @@ def seed_walkthrough():
     issue(officer, "EW-1188", "Lotus Kirana Store (sample)", "Electronic weighing instrument",
           verified_for("Electronic weighing instrument", "TN", 35), code=WALKTHROUGH[2])
     issue(officer, "WB-4471", "Nilgiri Traders (sample)", "Weighbridge", today - timedelta(days=1), code=WALKTHROUGH[3])
+    seed_request()
+
+
+def seed_request():
+    """One waiting request from trader1, so the officer dashboard shows the trader flow."""
+    trader = db.fetch_one("SELECT id, firm_name FROM users WHERE username = 'trader1'")
+    if trader is None or not trader.firm_name:
+        return
+    if db.fetch_one("SELECT id FROM applications WHERE reference = 'A-DEMO-0001'"):
+        return          # already there
+    db.run("""INSERT INTO applications (reference, created_at, trader_id, firm_name, serial_number,
+                  instrument_type, state_code, jurisdiction, address, note)
+              VALUES ('A-DEMO-0001', :at, :t, :firm, 'FD-2210', 'Fuel dispensing unit', 'TN', 'Chennai',
+                      '14 GST Road, Chennai (sample address)', 'New pump, not yet in use (sample)')""",
+           at=clock.stamp(), t=trader.id, firm=trader.firm_name)
 
 
 def report():

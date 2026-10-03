@@ -7,7 +7,8 @@ import importlib
 
 from conftest import PW, issue_code, login, post, q, status_of
 
-POST_ROUTES = ("/login", "/report", "/submit", "/logout", "/revoke/SD-2222-2222")
+POST_ROUTES = ("/login", "/report", "/submit", "/logout", "/revoke/SD-2222-2222", "/apply",
+               "/applications/A-XXXX-XXXX/decline", "/reports/1/close")
 
 
 # ---------------------------------------------------------------- CSRF (SYS-506)
@@ -61,7 +62,7 @@ def test_login_is_rate_limited(app_client):
 
 
 def test_public_reports_are_rate_limited(app_client):
-    codes = [post(app_client, "/report", {"serial_number": "S", "description": "spam"}).status_code
+    codes = [post(app_client, "/report", {"serial_number": "S", "description": "spam report text"}).status_code
              for _ in range(7)]
     assert codes[:5] == [200] * 5 and 429 in codes[5:]
     assert q("SELECT COUNT(*) FROM reports")[0][0] == 5
@@ -190,3 +191,37 @@ def test_head_requests_never_count_as_a_login_or_a_report(app_client):
         assert app_client.head("/report").status_code == 200
     assert q("SELECT COUNT(*) FROM audit WHERE action = 'failed login'")[0][0] == 0
     assert login(app_client).status_code == 302
+
+
+def test_new_pages_have_no_inline_script_or_style(app_client):
+    login(app_client, "trader1")
+    for path in ("/my", "/apply"):
+        body = app_client.get(path).get_data(as_text=True)
+        assert "<script>" not in body and " style=" not in body and " onclick=" not in body, path
+
+
+def test_script_in_a_trader_request_is_escaped_for_the_officer(app_client):
+    login(app_client, "trader1")
+    post(app_client, "/apply", {"serial_number": "X-1", "instrument_type": "Weighbridge", "state_code": "TN",
+                                "jurisdiction": "Chennai", "address": "<img src=x onerror=alert(1)>",
+                                "note": "<script>alert(2)</script>"})
+    login(app_client)
+    body = app_client.get("/dashboard").get_data(as_text=True)
+    assert "<img src=x" not in body and "<script>alert(2)" not in body
+
+
+def test_requests_are_rate_limited(app_client):
+    login(app_client, "trader1")
+    codes = []
+    for n in range(12):
+        codes.append(post(app_client, "/apply", {"serial_number": f"S-{n}", "instrument_type": "Weighbridge",
+                                                 "state_code": "TN", "jurisdiction": "Chennai",
+                                                 "address": "Somewhere (sample)"}).status_code)
+    assert codes[:10] == [302] * 10 and 429 in codes[10:]
+
+
+def test_trader_cannot_act_as_officer_on_requests_or_reports(app_client):
+    post(app_client, "/report", {"serial_number": "", "state_code": "TN", "description": "Something wrong here (sample)"})
+    login(app_client, "trader1")
+    assert post(app_client, "/reports/1/close", {"outcome": "closing it myself"}).status_code == 403
+    assert post(app_client, "/applications/A-XXXX-XXXX/decline", {"reason": "nope nope"}).status_code == 403

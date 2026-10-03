@@ -539,7 +539,7 @@ def test_a_database_from_before_this_version_upgrades_and_old_certificates_still
            ":v, '2099-01-01', 2, :s, 'TN')", v=TODAY.isoformat(), s=sig)
     db.run("DROP TABLE alembic_version")              # as if made before migrations existed
     db.upgrade_to_latest()
-    assert q("SELECT version_num FROM alembic_version") == [("0004",)]
+    assert q("SELECT version_num FROM alembic_version") == [("0005",)]
     assert status_of(app_client, "CERT-0001")[0] == "VALID"
     assert status_of(app_client, "cert-1")[0] == "VALID"
 
@@ -568,7 +568,12 @@ def test_full_seed_lands_in_the_agreed_bands_with_every_fraud_rule(app_client):
 
 def test_old_admin_district_is_cleared_by_migration(app_client):
     """admin1 made by the old code had jurisdiction 'State HQ'; 0004 clears it."""
+    import os
+    from alembic import command
+    from alembic.config import Config
+    cfg = Config()
+    cfg.set_main_option("script_location", os.path.join(db.HERE, "migrations"))
+    command.downgrade(cfg, "0003")                      # back to before the fix
     db.run("UPDATE users SET jurisdiction = 'State HQ' WHERE username = 'admin1'")
-    db.run("UPDATE alembic_version SET version_num = '0003'")
     db.upgrade_to_latest()
     assert q("SELECT jurisdiction FROM users WHERE username = 'admin1'") == [("",)]

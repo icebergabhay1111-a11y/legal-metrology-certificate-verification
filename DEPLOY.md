@@ -24,6 +24,7 @@ workers each would count separately.
 | `SECRET_KEY` | long random string | Signs the login cookie. Required when `APP_ENV=production` |
 | `SIGNING_KEY` | output of `python signing.py --print-key` | Signs certificates. Required when `APP_ENV=production`: the app refuses to start without it (SYS-502) |
 | `PW_TRADER`, `PW_LAB`, `PW_DISTRICT`, `PW_ADMIN`, `PW_MZ` | one password each | In production an account whose variable is missing is not created |
+| `TEAM_PASSWORD` | one password | Shared by the six team demo officers (anikeit, abhay, anvita, krishna, shreyash, vaibhavi), one per State. Not set = those accounts are not created |
 | `DATABASE_URL` | Neon connection string | Records survive deploys. Tables are created and upgraded automatically at start-up |
 | `APP_ENV` | `production` | Turns on the production checks and the `Secure` cookie flag |
 
@@ -37,7 +38,7 @@ the slides or a group chat.
 2. Copy the connection string (it starts `postgresql://` and ends with `sslmode=require`).
 3. Render → the service → Environment → add `DATABASE_URL`. Save, rebuild and deploy.
 4. When it is Live: open `/admin/health` as `admin1`. "database" should say `postgresql` and
-   "migration" should say `0004`.
+   "migration" should say `0005`.
 5. Issue one certificate, redeploy, and open its status page again. If it is still there, the data is durable.
 
 The `postgres://` vs `postgresql://` prefix difference is handled in `db.py`.

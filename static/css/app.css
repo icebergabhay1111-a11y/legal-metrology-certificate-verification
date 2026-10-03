@@ -170,3 +170,6 @@ h3{font-size:1rem;margin:1rem 0 .4rem}
 @media print{.cert .layout{grid-template-columns:2fr 1fr} .qr img{width:5cm;height:5cm}}
 .claimed{margin-top:1rem}
 .claimed h2{font-size:1rem;margin:0 0 .4rem}
+.inline-form{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.4rem}.inline-form input{width:auto;flex:1 1 140px;padding:.3rem .5rem}
+.nowrap{white-space:nowrap}
+.check-plate{border-left:6px solid var(--navy);background:var(--card);padding:.7rem 1rem;margin:0 0 1rem;border-radius:var(--r)}
