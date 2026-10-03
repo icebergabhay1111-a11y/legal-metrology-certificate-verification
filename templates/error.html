@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<h1 class="title">{{ title }}</h1>
+<div class="status none" role="alert"><span class="ico" aria-hidden="true">!</span><div>
+  <strong>{{ code }}</strong>
+  <p>{{ message }}</p></div></div>
+<p class="src">Reference: <strong>{{ g.request_id }}</strong>. Quote this code and reference if you contact us.</p>
+<div class="actions"><a class="btn" href="{{ url_for('home') }}">Go to certificate verification</a></div>
+{% endblock %}

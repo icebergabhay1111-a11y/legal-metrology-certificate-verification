@@ -36,6 +36,13 @@
     setContrast(!root.classList.contains("hc"));
   });
 
+  // Print buttons are hidden until this script runs, since they need it.
+  var printers = document.querySelectorAll("[data-print]");
+  for (var j = 0; j < printers.length; j++) {
+    printers[j].hidden = false;
+    printers[j].addEventListener("click", function () { window.print(); });
+  }
+
   setSize(load("fs") || "");
   setContrast(load("hc") === "1");
   tools.hidden = false;

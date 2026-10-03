@@ -9,7 +9,8 @@
     <h2>Sign in</h2>
     <div class="body">
       {% if error %}<p class="error" role="alert" id="login-error">{{ error }}</p>{% endif %}
-      <label for="username" style="margin-top:0">Username</label>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label class="first" for="username">Username</label>
       <input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required
              value="{{ request.form.get('username', '') }}" {% if error %}aria-describedby="login-error"{% endif %}>
       <label for="password">Password</label>

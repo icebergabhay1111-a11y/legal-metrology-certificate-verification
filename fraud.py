@@ -158,3 +158,24 @@ def run_all_checks(new_cert, existing_certs, officer, certs_today=None,
         check_lapsed_reregistration(new_cert, existing_certs),
     ]
     return [f for f in found if f]
+
+
+# Each rule's error code, from errors.py / the taxonomy document.
+def run_all_checks_coded(new_cert, existing_certs, officer, certs_today=None, limit=40):
+    """Like run_all_checks, but returns [(code, message)] so alerts carry an LM code."""
+    certs_today = certs_today or []
+    area = check_out_of_jurisdiction(new_cert, officer)
+    found = [
+        ("LM-201", check_duplicate_serial(new_cert, existing_certs)),
+        (_jurisdiction_code(officer, area), area),
+        ("LM-206", check_improbable_volume(officer, certs_today, limit)),
+        ("LM-207", check_lapsed_reregistration(new_cert, existing_certs)),
+    ]
+    return [(code, msg) for code, msg in found if msg]
+
+
+def _jurisdiction_code(officer, message):
+    """LM-202 officer outside area; LM-203 test centre outside State; LM-204 wrong category."""
+    if officer.get("kind") != "gatc":
+        return "LM-202"
+    return "LM-204" if message and "is not approved for" in message else "LM-203"

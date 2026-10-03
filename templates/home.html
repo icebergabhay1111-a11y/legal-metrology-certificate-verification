@@ -8,14 +8,14 @@
     <p>Check whether a weighing or measuring instrument has a valid verification certificate, and when it expires. The status is worked out on the day you check.</p>
     <form class="search" action="{{ url_for('verify_search') }}" method="get" role="search">
       {% if error %}<p class="error" id="code-error">{{ error }}</p>{% endif %}
-      <label for="code" style="margin-top:0">Certificate ID</label>
+      <label class="first" for="code">Certificate ID or serial number</label>
       <div class="row">
         <input id="code" name="code" inputmode="text" autocomplete="off" spellcheck="false"
-               placeholder="e.g. CERT-0001" value="{{ code or '' }}"
+               placeholder="e.g. SD-7K4Q-9XWD or a serial number" value="{{ code or '' }}"
                aria-describedby="code-hint{% if error %} code-error{% endif %}" required>
         <button class="btn" type="submit">Verify certificate</button>
       </div>
-      <p class="hint" id="code-hint">The ID is printed on the certificate, next to its QR code. Scanning the QR code opens the same result.</p>
+      <p class="hint" id="code-hint">The certificate ID is printed next to its QR code; scanning the QR opens the same result. You can also type the serial number from the instrument's plate.</p>
     </form>
   </div>
 </section>
@@ -32,7 +32,7 @@
   <h2 id="h-how">How verification works</h2>
   <div class="body">
     <ol class="steps">
-      <li><b>Enter the ID or scan the QR.</b><br>Use the certificate ID printed on the certificate.</li>
+      <li><b>Enter the ID or scan the QR.</b><br>Or type the serial number on the instrument.</li>
       <li><b>We check the record in this system.</b><br>The status is calculated from the expiry date on the day you check.</li>
       <li><b>Read the result.</b><br>Valid, expiring soon, expired or not found, and what it means.</li>
     </ol>

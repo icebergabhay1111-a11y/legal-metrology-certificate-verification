@@ -2,11 +2,11 @@
 {% set active = 'report' %}
 {% block title %}Report a problem{% endblock %}
 {% block content %}
-<div class="narrow" style="max-width:640px">
+<div class="narrow wide">
   <h1 class="title">Report a problem with an instrument</h1>
   <p class="sub">A scale, weighbridge or fuel pump looks tampered with, or its certificate looks fake. No login needed. Your report goes to the officer dashboard.</p>
   {% if submitted %}
-    <p class="success" role="status">Thank you. Your report has been recorded for officers to review.</p>
+    <p class="success" role="status">Thank you. Your report has been recorded for officers to review. Your reference is <strong>{{ reference }}</strong>.</p>
     <p>For a complaint about short weight or measure as a consumer, you can also call the National Consumer Helpline on <strong>1915</strong>.</p>
     <div class="actions"><a class="btn" href="{{ url_for('home') }}">Back to verification</a></div>
   {% else %}
@@ -14,11 +14,12 @@
     <h2>Your report</h2>
     <div class="body">
       {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
-      <label for="serial_number" style="margin-top:0">Serial number of the instrument</label>
-      <input id="serial_number" name="serial_number" autocomplete="off" required value="{{ request.form.get('serial_number', '') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label class="first" for="serial_number">Serial number of the instrument</label>
+      <input id="serial_number" name="serial_number" autocomplete="off" maxlength="40" required value="{{ request.form.get('serial_number', '') }}">
       <p class="field-hint">Usually on a metal plate or sticker on the instrument.</p>
       <label for="description">What did you notice?</label>
-      <textarea id="description" name="description" aria-describedby="desc-hint" required>{{ request.form.get('description', '') }}</textarea>
+      <textarea id="description" name="description" maxlength="2000" aria-describedby="desc-hint" required>{{ request.form.get('description', '') }}</textarea>
       <p class="field-hint" id="desc-hint">Where it is, and what looked wrong. Please do not include your phone number or other personal details.</p>
       <div class="actions"><button class="btn" type="submit">Submit report</button></div>
     </div>

@@ -1,0 +1,13 @@
+{# Contacts block. entries: list of contact dicts (already filtered to sourced ones). #}
+{% for c in entries %}
+<div class="contact">
+  <p><strong>{{ c.label }}</strong></p>
+  {% if c.what_they_do %}<p>{{ c.what_they_do }}</p>{% endif %}
+  {% if c.phone %}<p>Phone: {% for n in c.phone.split(',') %}<a href="tel:{{ n.strip().replace('-', '').replace(' ', '') }}">{{ n.strip() }}</a>{{ ', ' if not loop.last }}{% endfor %}{% if c.phone_note %} · {{ c.phone_note }}{% endif %}</p>{% endif %}
+  {% if c.whatsapp %}<p>WhatsApp and SMS: {{ c.whatsapp }}</p>{% endif %}
+  {% if c.email %}<p>Email: <a href="mailto:{{ c.email }}">{{ c.email }}</a></p>{% endif %}
+  {% if c.address %}<p>{{ c.address }}</p>{% endif %}
+  {% if c.url %}<p><a href="{{ c.url }}">{{ c.url.replace('https://', '').rstrip('/') }}</a></p>{% endif %}
+  <p class="src">Source: {{ c.source }}, checked {{ c.verified_on|nice }}.</p>
+</div>
+{% endfor %}

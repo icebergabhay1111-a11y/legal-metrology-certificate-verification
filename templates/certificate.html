@@ -1,34 +1,36 @@
 {% extends "base.html" %}
 {% set active = 'issue' %}
-{% block title %}{{ certificate_id }} issued{% endblock %}
+{% block title %}Certificate {{ c.code }}{% endblock %}
 {% block content %}
-<p class="success no-print" role="status">Certificate {{ certificate_id }} has been issued and signed.</p>
-<article class="panel" aria-labelledby="h-cert">
-  <h2 id="h-cert">Verification certificate · {{ certificate_id }}</h2>
+{% if just_issued %}<p class="success no-print" role="status">Certificate {{ c.code }} has been issued and signed.</p>{% endif %}
+<article class="panel cert" aria-labelledby="h-cert">
+  <h2 id="h-cert">Verification record · {{ c.code }}</h2>
   <div class="body layout">
     <dl class="facts">
-      <dt>Certificate ID</dt><dd>{{ certificate_id }}</dd>
-      <dt>Serial number</dt><dd>{{ serial_number }}</dd>
-      <dt>Owner</dt><dd>{{ owner_name }}</dd>
-      <dt>Instrument type</dt><dd>{{ instrument_type }}</dd>
-      <dt>Class of instrument</dt><dd>{{ instrument_class or 'Not recorded' }}</dd>
-      <dt>Maximum permissible error</dt><dd>{{ max_permissible_error or 'Not recorded' }}</dd>
-      <dt>Issuing officer</dt><dd>{{ officer_name }}</dd>
-      <dt>Verified on</dt><dd>{{ verification_date|nice }}</dd>
-      <dt>Re-verification period</dt><dd>{{ reverification_months }} months</dd>
-      <dt>Expires on</dt><dd>{{ expiry_date|nice }}</dd>
+      <dt>Certificate ID</dt><dd>{{ c.code }}</dd>
+      <dt>Serial number</dt><dd>{{ c.serial_number }}</dd>
+      <dt>Owner</dt><dd>{{ c.owner_name }}</dd>
+      <dt>Instrument type</dt><dd>{{ c.instrument_type }}</dd>
+      <dt>Class of instrument</dt><dd>{{ c.instrument_class or 'Not recorded' }}</dd>
+      <dt>Maximum permissible error</dt><dd>{{ c.max_permissible_error or 'Not recorded' }}</dd>
+      {% if c.jurisdiction %}<dt>District</dt><dd>{{ c.jurisdiction }}, {{ c.state_code }}</dd>{% endif %}
+      <dt>Issuing officer</dt><dd>{{ c.officer_name }}</dd>
+      <dt>Verified on</dt><dd>{{ c.verification_date|nice }}</dd>
+      <dt>Re-verification period</dt><dd>{{ c.reverification_months }} months</dd>
+      <dt>Expires on</dt><dd>{{ c.expiry_date|nice }}</dd>
+      <dt>Signing key</dt><dd>{{ c.key_id or 'original key' }}</dd>
     </dl>
-    <div style="text-align:center">
-      <img src="{{ qr_code }}" alt="QR code linking to the live status of {{ certificate_id }}" width="200" height="200">
-      <p class="src">Scan to see the status on the day you scan.</p>
-      <p class="src" style="word-break:break-all">{{ verification_url }}</p>
+    <div class="qr">
+      <img src="{{ qr_code }}" alt="QR code for certificate {{ c.code }}" width="240" height="240">
+      <p class="src">Scan with any phone camera to see today's status. The Sahi Daam offline checker can also confirm the signature with no network.</p>
+      <p class="src url">{{ verification_url }}</p>
     </div>
   </div>
 </article>
 <p class="note">Issued in the Sahi Daam student prototype. This is a record for demonstration, not a legal certificate under the Legal Metrology Act, 2009. {{ period_note }}</p>
 <div class="actions no-print">
-  <button class="btn" type="button" onclick="window.print()">Print certificate</button>
+  <button class="btn" type="button" data-print hidden>Print certificate</button>
   <a class="btn alt" href="{{ url_for('issue') }}">Issue another</a>
-  <a class="btn alt" href="{{ url_for('verify', certificate_id=certificate_id) }}">Open its status page</a>
+  <a class="btn alt" href="{{ url_for('verify', code=c.code) }}">Open its status page</a>
 </div>
 {% endblock %}

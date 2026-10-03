@@ -12,7 +12,7 @@
   <a class="tile" href="#reports"><span class="n">{{ reports|length }}</span>Public reports</a>
 </section>
 
-<div class="actions no-print" style="margin:0 0 1.25rem">
+<div class="actions no-print top">
   <a class="btn" href="{{ url_for('issue') }}">Issue a certificate</a>
   <a class="btn alt" href="{{ url_for('reminders') }}">Full re-verification list</a>
   {% if user.role == 'admin' %}<a class="btn alt" href="{{ url_for('auth.audit_log') }}">Audit log</a>{% endif %}
@@ -23,10 +23,11 @@
   <div class="body">
   {% if fraud_alerts %}
     <div class="tbl"><table>
-      <thead><tr><th scope="col">When</th><th scope="col">Certificate</th><th scope="col">Serial</th><th scope="col">Officer</th><th scope="col">Why it was flagged</th></tr></thead>
+      <thead><tr><th scope="col">Code</th><th scope="col">When</th><th scope="col">Certificate</th><th scope="col">Serial</th><th scope="col">Officer</th><th scope="col">Why it was flagged</th></tr></thead>
       <tbody>{% for a in fraud_alerts %}<tr>
+        <td><span class="badge bad">{{ a.code or '—' }}</span></td>
         <td>{{ a.at }}</td>
-        <td><a href="{{ url_for('verify', certificate_id=a.certificate_code) }}">{{ a.certificate_code }}</a></td>
+        <td><a href="{{ url_for('verify', code=a.certificate_code) }}">{{ a.certificate_code }}</a></td>
         <td>{{ a.serial_number }}</td><td>{{ a.officer_name }}</td><td>{{ a.reason }}</td>
       </tr>{% endfor %}</tbody>
     </table></div>
@@ -56,8 +57,8 @@
   <div class="body">
   {% if reports %}
     <div class="tbl"><table>
-      <thead><tr><th scope="col">Received</th><th scope="col">Serial number</th><th scope="col">What was reported</th><th scope="col">Status</th></tr></thead>
-      <tbody>{% for r in reports %}<tr><td>{{ r.at }}</td><td>{{ r.serial_number }}</td><td>{{ r.description }}</td><td>{{ r.status }}</td></tr>{% endfor %}</tbody>
+      <thead><tr><th scope="col">Reference</th><th scope="col">Received</th><th scope="col">Serial number</th><th scope="col">What was reported</th><th scope="col">Status</th></tr></thead>
+      <tbody>{% for r in reports %}<tr><td>{{ r.reference or "—" }}</td><td>{{ r.at }}</td><td>{{ r.serial_number }}</td><td>{{ r.description }}</td><td>{{ r.status }}</td></tr>{% endfor %}</tbody>
     </table></div>
   {% else %}<p class="empty">No public reports.</p>{% endif %}
   </div>

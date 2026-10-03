@@ -60,10 +60,10 @@ def run(sql, **params):
         conn.execute(text(sql), params)
 
 
-def upgrade_to_latest():
+def upgrade_to_latest(target="head"):
     """Apply any migration not yet applied. Safe to call on every start."""
     from alembic import command
     from alembic.config import Config
     cfg = Config()
     cfg.set_main_option("script_location", os.path.join(HERE, "migrations"))
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, target)

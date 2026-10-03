@@ -9,7 +9,7 @@
   </tr></thead>
   <tbody>
   {% for c in rows %}<tr>
-    <th scope="row"><a href="{{ url_for('verify', certificate_id=c.code) }}">{{ c.code }}</a></th>
+    <th scope="row"><a href="{{ url_for('verify', code=c.code) }}">{{ c.code }}</a></th>
     <td>{{ c.serial_number }}</td><td>{{ c.owner_name }}</td><td>{{ c.instrument_type }}</td>
     <td>{{ c.state_code }}</td><td>{{ c.expires_on|nice }}</td>
     <td>{% if mode == 'expired' %}<span class="badge bad">✕ {{ c.days }}</span>{% else %}<span class="badge warn">! {{ c.days }}</span>{% endif %}</td>

@@ -5,6 +5,8 @@
 <p class="crumbs"><a href="{{ url_for('auth.dashboard') }}">Dashboard</a> › Audit log</p>
 <h1 class="title">Audit log</h1>
 <p class="sub">The last 200 actions, newest first. Every login, issue, rejection and public report is recorded here.</p>
+{% if intact %}<p class="success" role="status">✓ Hash chain intact: no past entry has been edited or deleted.</p>
+{% else %}<p class="error" role="alert">✕ Hash chain broken at entry {{ broken_at }}: that entry or the one before it was edited or deleted.</p>{% endif %}
 <section class="panel" aria-labelledby="h-audit">
   <h2 id="h-audit">Entries</h2>
   <div class="body">
